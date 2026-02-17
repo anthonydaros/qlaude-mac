@@ -1,0 +1,127 @@
+# qlaude Sample Queue File
+# Copy this to .qlaude-queue in your project root to test all features
+# Lines starting with # are comments (not processed)
+
+# ============================================
+# Basic Queue Items
+# ============================================
+
+# Simple prompt
+Say "Hello from qlaude queue!" and nothing else.
+
+# Another simple prompt
+What is 2 + 2? Answer with just the number.
+
+# ============================================
+# Breakpoints
+# ============================================
+
+# Breakpoint pauses auto-execution until you manually resume
+# Use :resume or Telegram /resume to continue
+>># Checkpoint: Review the responses above before continuing
+
+# ============================================
+# New Session Markers
+# ============================================
+
+# Start a fresh Claude Code session (clears conversation history)
+# Can be used alone (>>>) or with a prompt (>>> prompt)
+>>>
+Say "Fresh session started!" to confirm.
+
+# Or combine with prompt on same line:
+>>> This is another new session. Confirm by saying "New session started!"
+
+# ============================================
+# Multiline Prompts
+# ============================================
+
+# Multiline prompt using >>( and >>)
+>>(
+Please create a simple function that:
+1. Takes a number as input
+2. Returns the square of that number
+3. Include a brief comment
+
+Just show the code, no explanation needed.
+>>)
+
+# ============================================
+# Session Labels
+# ============================================
+
+# Save current session with a label (can be restored later)
+>>{Label:test-checkpoint}
+
+# Simple prompt after labeling
+Confirm the session was labeled by saying "Session labeled!"
+
+# ============================================
+# Load Session (uncomment to test)
+# ============================================
+
+# Load a previously saved session
+# >>{Load:test-checkpoint}
+
+# Load session and start fresh conversation
+# >>>{Load:test-checkpoint} Continue from the checkpoint
+
+# ============================================
+# Multiline with New Session
+# ============================================
+
+# Multiline prompt that also starts a new session
+>>>(
+This is a multiline prompt in a new session.
+Please confirm by listing:
+- "New session: yes"
+- "Multiline: yes"
+>>)
+
+# ============================================
+# Selection Prompt Test
+# ============================================
+
+# This prompt will trigger a permission dialog (Y/n selection)
+# qlaude detects this as SELECTION_PROMPT state and pauses auto-execution
+# You can respond via keyboard or Telegram inline buttons
+Write a file called "qlaude-test.txt" with the content "Hello from qlaude!"
+
+>># After permission prompt - verify file was created or declined
+
+# ============================================
+# QUEUE_STOP Test (uncomment to test)
+# ============================================
+
+# QUEUE_STOP is triggered when:
+# 1. Claude outputs the literal text "QUEUE_STOP" (you can ask Claude to say it)
+# 2. Rate limit is detected (429 errors, "rate limit" messages)
+# 3. Task failure patterns are detected
+#
+# When QUEUE_STOP is detected, qlaude pauses and the current item
+# is re-queued at the front for retry after :resume
+#
+# Uncomment below to test (will pause the queue):
+# Say the exact text "QUEUE_STOP" and nothing else.
+
+# ============================================
+# Final Breakpoint
+# ============================================
+
+>># End of sample queue - all features tested!
+
+# ============================================
+# Feature Checklist:
+# ============================================
+# [x] Simple prompts
+# [x] Breakpoints (>>#)
+# [x] New session (>>>)
+# [x] Multiline prompts (>>( ... >>))
+# [x] Session labels (>>{Label:name})
+# [x] Multiline + new session (>>>( ... >>))
+# [x] Selection prompt (SELECTION_PROMPT state)
+#
+# Not included (require manual setup):
+# [ ] Load session (>>{Load:name}) - needs existing label
+# [ ] QUEUE_STOP test - uncomment the test above
+# [ ] Telegram commands - needs bot configuration
