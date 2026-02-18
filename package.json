@@ -7,10 +7,10 @@
   "type": "module",
   "main": "./dist/main.js",
   "bin": {
-    "qlaude": "./dist/main.js",
-    "qlaude-session-hook": "./dist/bin/session-hook.js",
-    "qlaude-setup-hooks": "./dist/bin/setup-hooks.js",
-    "qlaude-remove-hooks": "./dist/bin/remove-hooks.js"
+    "qlaude": "dist/main.js",
+    "qlaude-session-hook": "dist/bin/session-hook.js",
+    "qlaude-setup-hooks": "dist/bin/setup-hooks.js",
+    "qlaude-remove-hooks": "dist/bin/remove-hooks.js"
   },
   "files": [
     "dist"
