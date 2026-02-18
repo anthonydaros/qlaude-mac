@@ -216,7 +216,7 @@ export const DEFAULT_TELEGRAM_CONFIG: TelegramConfig = {
   enabled: false,
   botToken: '',
   chatId: '',
-  language: 'ko',
+  language: 'en',
   confirmDelayMs: 30000,
 };
 

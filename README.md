@@ -67,7 +67,7 @@ Save and restore Claude Code sessions by name:
 
 ### Queue File
 
-Pre-load prompts by creating `.qlaude-queue` in your project root:
+Pre-load prompts by creating `.qlaude/queue` in your project root:
 
 ```
 First prompt to execute
@@ -91,16 +91,14 @@ prompt here
 
 ### Telegram Integration
 
-Remote monitoring and control via Telegram bot. Configure in `.qlauderc.json`:
+Remote monitoring and control via Telegram bot. Configure in `.qlaude/telegram.json`:
 
 ```json
 {
-  "telegram": {
-    "enabled": true,
-    "botToken": "your-bot-token",
-    "chatId": "your-chat-id",
-    "language": "en"
-  }
+  "enabled": true,
+  "botToken": "your-bot-token",
+  "chatId": "your-chat-id",
+  "language": "en"
 }
 ```
 
@@ -109,21 +107,21 @@ Features:
 - Inline keyboard buttons for remote selection
 - Remote commands: `/status`, `/pause`, `/resume`, `/log`, `/display`, `/send`, `/key`
 - Multi-instance support via `HOSTNAME:PID` targeting
-- Message language: Korean (`"ko"`, default) or English (`"en"`)
+- Message language: English (`"en"`, default) or Korean (`"ko"`)
 
 ### Configuration
 
-On first run, qlaude auto-creates `.qlauderc.json` and `.qlaude-queue` in the current directory. Edit `.qlauderc.json` to customize:
+On first run, qlaude auto-creates a `.qlaude/` directory with config templates (`config.json`, `patterns.json`, `telegram.json`) and an empty queue file. Edit `.qlaude/config.json` to customize:
 
 ```json
 {
-  "startPaused": false,
-  "idleThresholdMs": 5000,
-  "requiredStableChecks": 2,
+  "startPaused": true,
+  "idleThresholdMs": 1000,
+  "requiredStableChecks": 3,
   "logLevel": "error",
-  "logFile": ".qlaude-debug.log",
+  "logFile": "debug.log",
   "conversationLog": {
-    "enabled": true
+    "enabled": false
   }
 }
 ```

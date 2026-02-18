@@ -100,7 +100,7 @@ function generateTelegramTemplate(): string {
     enabled: false,
     botToken: 'YOUR_BOT_TOKEN_HERE',
     chatId: 'YOUR_CHAT_ID_HERE',
-    language: 'ko',
+    language: 'en',
     messages: {},
     templates: {},
   };
@@ -143,29 +143,46 @@ function warnLegacyConfig(): void {
 }
 
 /**
- * Create .qlaude directory with config templates if it doesn't exist.
- * Returns true if a new directory was created.
+ * Create .qlaude directory with config templates if they don't exist.
+ * If the directory exists but config files are missing, creates the missing files.
+ * Returns true if any files were created.
  */
 export function ensureConfigDir(): boolean {
   const cwdDir = join(process.cwd(), QLAUDE_DIR);
 
-  if (existsSync(cwdDir)) {
-    return false;
-  }
-
   // Skip if config exists in home directory (user intentionally uses global config)
-  const homeDir = join(homedir(), QLAUDE_DIR);
-  if (existsSync(homeDir)) {
-    return false;
+  if (!existsSync(cwdDir)) {
+    const homeDir = join(homedir(), QLAUDE_DIR);
+    if (existsSync(homeDir)) {
+      return false;
+    }
   }
 
   try {
-    mkdirSync(cwdDir, { recursive: true });
-    writeFileSync(join(cwdDir, CONFIG_FILE), generateCommonTemplate(), 'utf-8');
-    writeFileSync(join(cwdDir, PATTERNS_FILE), generatePatternsTemplate(), 'utf-8');
-    writeFileSync(join(cwdDir, TELEGRAM_FILE), generateTelegramTemplate(), 'utf-8');
-    logger.info({ path: cwdDir }, 'Created .qlaude config directory');
-    return true;
+    if (!existsSync(cwdDir)) {
+      mkdirSync(cwdDir, { recursive: true });
+    }
+
+    const files: Array<{ name: string; generate: () => string }> = [
+      { name: CONFIG_FILE, generate: generateCommonTemplate },
+      { name: PATTERNS_FILE, generate: generatePatternsTemplate },
+      { name: TELEGRAM_FILE, generate: generateTelegramTemplate },
+    ];
+
+    let created = false;
+    for (const file of files) {
+      const filePath = join(cwdDir, file.name);
+      if (!existsSync(filePath)) {
+        writeFileSync(filePath, file.generate(), 'utf-8');
+        logger.info({ path: filePath }, `Created config file: ${file.name}`);
+        created = true;
+      }
+    }
+
+    if (created) {
+      logger.info({ path: cwdDir }, 'Config files created in .qlaude directory');
+    }
+    return created;
   } catch {
     // Silently ignore - may not have write permission
     return false;

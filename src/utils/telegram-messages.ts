@@ -142,7 +142,7 @@ export function setMessageOverrides(overrides: Record<string, string>): void {
  * Priority: user overrides > language-specific > Korean fallback > raw key.
  */
 export function t(key: string, lang: Language, params?: Record<string, string | number>): string {
-  let msg = userOverrides[key] ?? messages[lang]?.[key] ?? messages['ko'][key] ?? key;
+  let msg = userOverrides[key] ?? messages[lang]?.[key] ?? messages['en'][key] ?? key;
   if (params) {
     for (const [k, v] of Object.entries(params)) {
       msg = msg.replaceAll(`{${k}}`, String(v));
