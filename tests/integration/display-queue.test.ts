@@ -38,7 +38,6 @@ describe('Display + QueueManager integration', () => {
   });
 
   it('should update status bar when item is added', async () => {
-    // Given
     vi.mocked(fs.readFile).mockRejectedValue({ code: 'ENOENT' });
     vi.mocked(fs.writeFile).mockResolvedValue(undefined);
 
@@ -46,54 +45,60 @@ describe('Display + QueueManager integration', () => {
       display.updateStatusBar(queueManager.getItems());
     });
 
-    // When
     await queueManager.addItem('Test prompt');
 
-    // Then
     const output = mockWrite.mock.calls.map((c) => c[0]).join('');
     expect(output).toContain('[1 item]');
     expect(output).toContain('Test prompt');
   });
 
   it('should update status bar when item is removed', async () => {
-    // Given
     vi.mocked(fs.readFile).mockResolvedValue('prompt1\nprompt2');
     vi.mocked(fs.writeFile).mockResolvedValue(undefined);
     await queueManager.reload();
 
-    // Clear mock calls from reload
     mockWrite.mockClear();
 
     queueManager.on('item_removed', () => {
       display.updateStatusBar(queueManager.getItems());
     });
 
-    // When
     await queueManager.removeLastItem();
 
-    // Then
     const output = mockWrite.mock.calls.map((c) => c[0]).join('');
     expect(output).toContain('[1 item]');
   });
 
   it('should update status bar when queue is reloaded', async () => {
-    // Given
     vi.mocked(fs.readFile).mockResolvedValue('prompt1\nprompt2\nprompt3');
 
     queueManager.on('queue_reloaded', () => {
       display.updateStatusBar(queueManager.getItems());
     });
 
-    // When
     await queueManager.reload();
 
-    // Then
     const output = mockWrite.mock.calls.map((c) => c[0]).join('');
     expect(output).toContain('[3 items]');
   });
 
-  it('should show new session marker after adding new session item', async () => {
-    // Given
+  it('should show [New Session] marker for @new items from queue file', async () => {
+    vi.mocked(fs.readFile).mockResolvedValue('prompt1\n@new\nprompt2');
+
+    queueManager.on('queue_reloaded', () => {
+      display.updateStatusBar(queueManager.getItems());
+    });
+
+    await queueManager.reload();
+
+    const output = mockWrite.mock.calls.map((c) => c[0]).join('');
+    expect(output).toContain('[3 items]');
+    expect(output).toContain('prompt1');
+    expect(output).toContain('[New Session]');
+    expect(output).toContain('prompt2');
+  });
+
+  it('should show [New Session] marker when new session is added via addItem', async () => {
     vi.mocked(fs.readFile).mockRejectedValue({ code: 'ENOENT' });
     vi.mocked(fs.writeFile).mockResolvedValue(undefined);
 
@@ -101,37 +106,27 @@ describe('Display + QueueManager integration', () => {
       display.updateStatusBar(queueManager.getItems());
     });
 
-    // When
-    await queueManager.addItem('New session prompt', true);
+    await queueManager.addItem('', { isNewSession: true });
 
-    // Then
     const output = mockWrite.mock.calls.map((c) => c[0]).join('');
-    expect(output).toContain('[NEW]');
-    expect(output).toContain('New session prompt');
+    expect(output).toContain('[New Session]');
   });
 
-  it('should update status bar with multiple items after reload', async () => {
-    // Given
-    vi.mocked(fs.readFile).mockResolvedValue('prompt1\n>>> session2\nprompt3');
+  it('should show [PAUSE] marker for @pause items from queue file', async () => {
+    vi.mocked(fs.readFile).mockResolvedValue('prompt1\n@pause check here');
 
     queueManager.on('queue_reloaded', () => {
       display.updateStatusBar(queueManager.getItems());
     });
 
-    // When
     await queueManager.reload();
 
-    // Then
     const output = mockWrite.mock.calls.map((c) => c[0]).join('');
-    expect(output).toContain('[3 items]');
-    expect(output).toContain('prompt1');
-    expect(output).toContain('[NEW]');
-    expect(output).toContain('session2');
-    expect(output).toContain('prompt3');
+    expect(output).toContain('[PAUSE]');
+    expect(output).toContain('check here');
   });
 
   it('should show empty queue after removing all items', async () => {
-    // Given
     vi.mocked(fs.readFile).mockResolvedValue('single prompt');
     vi.mocked(fs.writeFile).mockResolvedValue(undefined);
     await queueManager.reload();
@@ -140,54 +135,43 @@ describe('Display + QueueManager integration', () => {
       display.updateStatusBar(queueManager.getItems());
     });
 
-    // Clear mock calls from reload
     mockWrite.mockClear();
 
-    // When
     await queueManager.removeLastItem();
 
-    // Then
     const output = mockWrite.mock.calls.map((c) => c[0]).join('');
     expect(output).toContain('[empty]');
   });
 
-  // Story 2.7: Status Bar Toggle tests
+  // Status bar toggle tests
   it('should not render status bar when disabled but queue operations work', async () => {
-    // Given
     vi.mocked(fs.readFile).mockRejectedValue({ code: 'ENOENT' });
     vi.mocked(fs.writeFile).mockResolvedValue(undefined);
 
     display.toggle(); // disable
-    mockWrite.mockClear(); // clear any calls from toggle
+    mockWrite.mockClear();
 
     queueManager.on('item_added', () => {
       display.updateStatusBar(queueManager.getItems());
     });
 
-    // When
     await queueManager.addItem('Test prompt');
 
-    // Then - queue should have the item
     expect(queueManager.getLength()).toBe(1);
-    // Status bar should not render (display disabled)
     expect(mockWrite).not.toHaveBeenCalled();
   });
 
   it('should render status bar immediately when toggled on', async () => {
-    // Given
     vi.mocked(fs.readFile).mockRejectedValue({ code: 'ENOENT' });
     vi.mocked(fs.writeFile).mockResolvedValue(undefined);
 
-    // Add item while display is disabled
     display.toggle(); // disable
     await queueManager.addItem('Test prompt');
     mockWrite.mockClear();
 
-    // When - toggle display back on
     display.toggle(); // enable
     display.updateStatusBar(queueManager.getItems());
 
-    // Then
     expect(mockWrite).toHaveBeenCalled();
     const output = mockWrite.mock.calls.map((c) => c[0]).join('');
     expect(output).toContain('[1 item]');

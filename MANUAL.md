@@ -40,7 +40,41 @@ qlaude --resume        # Resume last Claude Code session
 qlaude --model opus    # Pass any Claude Code arguments
 ```
 
-All arguments after `qlaude` are forwarded directly to Claude Code.
+All standard arguments (`--` prefix) are forwarded directly to Claude Code.
+
+### qlaude-Specific Flags
+
+qlaude uses a triple-dash (`---`) prefix for its own flags to avoid collision with Claude Code flags:
+
+| Flag | Description |
+|------|-------------|
+| `---run` | Batch mode: override `startPaused` to `false` and auto-exit when queue completes (exit 0) or fails (exit 1). Writes a report to `.qlaude/batch-report.json`. |
+| `---file <path>` | Load the specified queue file into `.qlaude/queue` before starting. Also overrides `startPaused` to `false`. |
+
+```bash
+qlaude ---run                          # Execute queue and exit
+qlaude ---file tasks.txt               # Load queue file and start
+qlaude ---run ---file tasks.txt        # Load queue file, execute, and exit
+qlaude ---run --model opus             # Batch mode with Claude Code flags
+```
+
+#### Batch Report
+
+When `---run` is used, qlaude writes `.qlaude/batch-report.json` on completion or failure:
+
+```json
+{
+  "status": "completed",
+  "startTime": "2026-01-15T10:00:00.000Z",
+  "endTime": "2026-01-15T10:05:30.000Z",
+  "durationMs": 330000,
+  "itemsExecuted": 5,
+  "error": null,
+  "queueFile": "tasks.txt"
+}
+```
+
+The `status` field is `"completed"` (exit 0) or `"failed"` (exit 1). On failure, the `error` field contains the reason (e.g., task failure reason or PTY exit code).
 
 ---
 
@@ -118,6 +152,8 @@ The `.qlaude/` directory also holds runtime files:
 - `.qlaude/session` — Session ID file
 - `.qlaude/session-labels.json` — Session labels
 - `.qlaude/queue-logs/` — Per-queue execution logs
+- `.qlaude/messages/` — Language-specific Telegram message overrides (`en.json`, `ko.json`)
+- `.qlaude/batch-report.json` — Batch mode report (when `---run` is used)
 - `.qlaude/debug.log` — Debug log (when `logFile` is set)
 - `.qlaude/conversation.log` — Conversation log (when enabled)
 
@@ -131,6 +167,7 @@ qlaude displays a fixed status bar at the top of the terminal. The left side sho
 
 - **Item count**: Number of items in the queue (e.g., `[3 items]`)
 - **Execution state**: `[running]` or `[paused]`
+- **Current item**: While a queue item is executing, the prompt text is shown persistently (e.g., `▶ Fix the login bug...`). This is replaced by temporary notification messages when they appear.
 - **Queue preview**: Up to 3 upcoming queue items with type tags
 - **Notification messages**: Temporary messages (auto-clear after 3 seconds)
 
@@ -141,13 +178,15 @@ Each queue item is displayed with a tag indicating its type:
 | Tag | Meaning |
 |-----|---------|
 | (none) | Normal prompt |
-| `[NEW]` | New session (`>>>`) |
-| `[BP]` | Breakpoint (`>>#`) |
+| `[New Session]` | New session (`@new` / `:add @new`) |
+| `[PAUSE]` | Pause point (`@pause`) |
 | `[ML]` | Multiline prompt |
-| `[LABEL:name]` | Session label save point |
-| `[LOAD:name]` | Session load point |
+| `[SAVE:name]` | Session save point (`@save`) |
+| `[LOAD:name]` | Session load point (`@load`) |
+| `[MODEL:name]` | Model switch (`@model opus`) |
+| `[DELAY:Nms]` | Timed delay (`@delay 3000`) |
 
-Tags can combine (e.g., `[ML] [NEW]` for a multiline new-session prompt).
+Tags can combine (e.g., `[ML] [New Session]` for a multiline new-session prompt). Items with self-descriptive tags (pause, save, load, delay, model, new session) omit `(no prompt)` when they have no prompt text.
 
 ### Toggling
 
@@ -163,16 +202,21 @@ The queue holds prompts that are automatically executed one by one when Claude f
 
 | Command | Description |
 |---------|-------------|
-| `>> prompt` | Add prompt to queue |
-| `>>> prompt` | Add prompt, start new Claude session first |
-| `>># comment` | Add breakpoint (pauses auto-execution) |
-| `>>#` | Add breakpoint without comment |
+| `:add prompt` | Add prompt to queue |
+| `:add @new` | Add new session marker to queue |
+| `:add @pause reason` | Add pause point to queue |
+| `:add @save name` | Add deferred session save to queue |
+| `:add @load name` | Add deferred session load to queue |
+| `:add @model name` | Add model switch to queue (sends `/model name` to Claude Code) |
+| `:add @delay ms` | Add timed delay to queue (e.g., `:add @delay 3000`) |
+| `:add \@text` | Add prompt starting with literal `@` |
 
 ### Removing from Queue
 
 | Command | Description |
 |---------|-------------|
-| `<<` | Remove last item from queue |
+| `:drop` | Remove last item from queue |
+| `:clear` | Clear all queue items |
 
 ### Meta Commands
 
@@ -182,6 +226,9 @@ The queue holds prompts that are automatically executed one by one when Claude f
 | `:resume` | Resume auto-execution |
 | `:status` | Toggle status bar visibility |
 | `:reload` | Reload queue from `.qlaude/queue` file |
+| `:help` | Show command reference |
+| `:list` | Show queue contents |
+| `:model name` | Switch model immediately (sends `/model name` to Claude Code) |
 
 ### Execution Flow
 
@@ -192,7 +239,7 @@ The queue holds prompts that are automatically executed one by one when Claude f
 
 Execution pauses when:
 - Queue is empty
-- Breakpoint is reached
+- Pause point is reached (@pause in queue file)
 - Claude shows a selection prompt (permission, file picker, etc.)
 - Task failure is detected (`QUEUE_STOP` marker or rate limit)
 - Spinner is detected on screen (safety pause)
@@ -238,7 +285,7 @@ Type normally — input is buffered and sent to Claude Code on Enter.
 
 ### Queue Input Mode
 
-Press `:` or `>` when the input buffer is empty to enter queue input mode. A `[Q]` prompt appears at the bottom of the terminal.
+Press `:` when the input buffer is empty to enter queue input mode. A `[Q]` prompt appears at the bottom of the terminal.
 
 - **Enter**: Execute the queue command
 - **Escape**: Cancel and exit queue mode
@@ -250,16 +297,16 @@ Press `:` or `>` when the input buffer is empty to enter queue input mode. A `[Q
 For multi-line prompts:
 
 ```
->>(
+:(
 Line 1 of your prompt
 Line 2 of your prompt
 Line 3 of your prompt
->>)
+:)
 ```
 
-- Start with `>>(` (or `>>>(` for new session)
+- Start with `:(`
 - Each line is buffered with a `[ML N]` indicator
-- End with `>>)` to submit
+- End with `:)` to submit
 - Whitespace and indentation are preserved
 
 ---
@@ -269,7 +316,7 @@ Line 3 of your prompt
 ### Saving Sessions
 
 ```
->>{Label:name}
+:save name
 ```
 
 Saves the current Claude Code session ID with the given label. Stored in `.qlaude/session-labels.json`.
@@ -277,16 +324,10 @@ Saves the current Claude Code session ID with the given label. Stored in `.qlaud
 ### Loading Sessions
 
 ```
->>{Load:name}
+:load name
 ```
 
 Restarts Claude Code and resumes the saved session.
-
-```
->>>{Load:name} prompt
-```
-
-Loads the session and queues a prompt to execute after resuming.
 
 ### How It Works
 
@@ -303,37 +344,50 @@ Create `.qlaude/queue` in your project root to pre-load prompts on startup.
 ### Syntax
 
 ```
-# Each line is a prompt (lines starting with >> prefix are optional)
+# Comments start with #
 Fix the login bug
->> Refactor the auth module
+Refactor the auth module
 
 # New session
->>> Start fresh with a new task
+@new
+Start fresh with a new task
 
 # Multiline prompt
->>(
+@(
 Write a function that:
 - Takes a list of numbers
 - Returns the sorted unique values
->>)
+@)
 
-# Breakpoint
->># Review changes before continuing
+# Pause point (pauses auto-execution)
+@pause Review changes before continuing
 
 # Session management
->>{Label:checkpoint-1}
->>>{Load:previous-work} Continue where we left off
+@save checkpoint-1
+@load previous-work
+
+# Model switching (sends /model command to Claude Code)
+@model opus
+Write a complex algorithm
+
+# Timed delay (milliseconds)
+@delay 3000
+This prompt runs after a 3-second delay
 ```
 
 ### Rules
 
 - Empty lines and lines starting with `#` (comments) are ignored
-- `>>` prefix is optional for simple prompts
-- `>>>` marks the prompt to run in a new Claude session
-- `>>(` ... `>>)` wraps multiline prompts (preserves whitespace)
-- `>>>(` ... `>>)` wraps multiline prompts for new session
-- `>>#` sets a breakpoint
-- `>>{Label:name}` / `>>{Load:name}` manage sessions
+- Bare text lines are treated as prompts
+- `@new` marks the next prompt to run in a new Claude session (standalone, no inline prompt)
+- `@(` ... `@)` wraps multiline prompts (preserves whitespace)
+- `@pause [reason]` sets a pause point
+- `@save name` / `@load name` manage sessions
+- `@model name` switches the Claude Code model (sends `/model name` to Claude Code); `@model` without args is silently skipped
+- `@delay ms` pauses queue execution for the specified milliseconds (must be positive integer; invalid values are silently skipped)
+- `\@text` escapes a prompt that starts with `@` (literal `@`)
+- `\\@text` escapes a prompt that starts with `\@` (literal `\@`)
+- All directives are case-insensitive (`@NEW`, `@Model`, `@PAUSE` all work)
 - Use `:reload` to re-read `.qlaude/queue` at runtime
 - **Items are removed from `.qlaude/queue` as they execute.** If you want to reuse a queue script, save it as a separate file and copy it to `.qlaude/queue` when needed
 
@@ -349,7 +403,7 @@ Each queue execution creates a separate log file in `.qlaude/queue-logs/` with a
 
 The log contains:
 - Queue start/completion markers with timestamps
-- Each queue item as it executes (with its type: `>>`, `>>>`, `>>#`, `>>{Label:...}`, etc.)
+- Each queue item as it executes (with its type: `@new`, `@pause`, `@save`, `@load`, etc.)
 - For multiline items, the full prompt content
 - Session transitions (new session starts, session loads)
 - Conversations extracted from Claude Code's JSONL session files
@@ -745,32 +799,39 @@ Message strings support `{placeholder}` interpolation. Priority: user overrides 
 
 ### Layout Templates
 
-Override the entire notification layout using `templates` in `.qlaude/telegram.json`. Templates use `{variable}` placeholders.
+Override the entire notification layout using `templates` in `.qlaude/telegram.json`. Templates use `{variable}` placeholders. All variables are raw data (MarkdownV2-escaped) — add your own emojis and formatting.
 
 ```json
 {
   "templates": {
-    "selection_prompt": "{header} {emoji} {title}\n\n{hostInfo}\n{project}\n{queue}\n\n{context}\n{options}",
-    "task_failed": "{emoji} {title}\n{message}\n{queue}",
-    "default": "{header} {emoji} {title}\n{hostInfo}\n{project}\n{queue}\n{message}"
+    "selection_prompt": "⚠️ *{title}*\n\n🖥️ {hostname} \\({ip}\\)\n📁 {project}\n📋 {queueLength}\n\n{context}\n{options}",
+    "breakpoint": "⏸️ *{title}*\n📁 {project}\n💬 {reason}",
+    "task_failed": "❌ *{title}*\n⚠️ {error}\n📋 {queueLength}",
+    "default": "🤖 *[qlaude]* *{title}*\n🖥️ {hostname}\n📁 {project}"
   }
 }
 ```
 
-#### Template Variables
+#### Common Variables (all notification types)
 
 | Variable | Description | Example |
 |----------|-------------|---------|
-| `{header}` | App header | `🤖 *[qlaude]*` |
-| `{emoji}` | Event emoji | `⚠️`, `✅`, `❌`, etc. |
-| `{title}` | Event title (bold) | `*Input Required*` |
-| `{hostInfo}` | Hostname + IP | `🖥️ myhost (192.168.1.1)` |
-| `{instanceInfo}` | Instance ID | `🆔 myhost:12345` |
-| `{project}` | Project name | `📁 my-project` |
-| `{queue}` | Queue item count | `📋 Queue: 3 items` |
-| `{message}` | Event-specific message | `💬 reason text` |
-| `{context}` | Screen context (code block) | ````...```` |
-| `{options}` | Parsed options list | `1. Option one` |
+| `{title}` | Event title (localized) | `Input Required` |
+| `{hostname}` | Host name | `myhost` |
+| `{ip}` | IP address | `192.168.1.1` |
+| `{instanceId}` | Instance identifier | `myhost:12345` |
+| `{project}` | Project name | `my-project` |
+| `{queueLength}` | Queue item count | `3` |
+
+#### Type-specific Variables
+
+| Type | Variable | Description | Example |
+|------|----------|-------------|---------|
+| breakpoint | `{reason}` | Pause reason | `Check results` |
+| task_failed | `{error}` | Failure message | `Rate limit exceeded` |
+| pty_crashed | `{recovery}` | Recovery status | `Resuming session...` |
+| selection_prompt | `{context}` | Screen context (code block) | ````...```` |
+| selection_prompt | `{options}` | Parsed options list | `1. Option one` |
 
 Templates can be set per notification type (`selection_prompt`, `breakpoint`, `queue_started`, `queue_completed`, `task_failed`, `pty_crashed`) or as a `default` fallback. Lines that become empty after variable substitution are automatically removed.
 
@@ -790,6 +851,12 @@ When the Claude Code process exits unexpectedly (non-zero exit code) during acti
 4. A Telegram notification is sent (if enabled)
 5. Queue execution continues from where it left off
 
+If Claude Code crashes **3 times consecutively**, qlaude stops auto-execution to prevent an infinite restart loop. The crash counter resets after each successful item execution. When the limit is reached:
+- Auto-execution pauses with remaining items preserved in the queue
+- A Telegram notification is sent
+- Claude Code restarts in idle mode (no queue execution)
+- Use `:resume` to retry manually
+
 ### Session Load Failure Recovery
 
 When loading a saved session fails (e.g., expired or invalid session ID):
@@ -803,7 +870,7 @@ When loading a saved session fails (e.g., expired or invalid session ID):
 
 ### New Session Retry
 
-When starting a new session (`>>>`) fails:
+When starting a new session (`:add @new` / `@new`) fails:
 
 1. qlaude retries once after a 1-second delay
 2. If the retry also fails, the item is re-added to the queue front
@@ -822,9 +889,8 @@ When starting a new session (`>>>`) fails:
 | Backspace | Delete last character from input buffer |
 | Ctrl+U | Clear the entire input buffer |
 | Ctrl+C | Send interrupt signal to Claude Code (SIGINT) |
-| `:` or `>` | Enter queue input mode (when input buffer is empty) |
-| `>>(` | Enter multiline mode |
-| `>>>(` | Enter multiline mode for new session |
+| `:` | Enter queue input mode (when input buffer is empty) |
+| `:(` | Enter multiline mode |
 
 ### Queue Input Mode
 
@@ -839,7 +905,7 @@ When starting a new session (`>>>`) fails:
 
 | Key | Action |
 |-----|--------|
-| Enter | Add current line to buffer (or submit if line is `>>)`) |
+| Enter | Add current line to buffer (or submit if line is `:)`) |
 | Backspace | Delete last character |
 | Ctrl+U | Clear current line |
 

@@ -20,189 +20,87 @@ describe('InputBuffer', () => {
       expect(result.action).toBe('passthrough');
       expect(result.data).toBe('\r');
     });
+
+    it('should passthrough special characters', () => {
+      const result = buffer.process('$');
+      expect(result.action).toBe('passthrough');
+      expect(result.data).toBe('$');
+    });
   });
 
-  describe('buffering queue commands', () => {
-    it('should start buffering on >', () => {
+  describe('no shortcut buffering (shortcuts removed)', () => {
+    it('should passthrough > character (no buffering)', () => {
       const result = buffer.process('>');
-      expect(result.action).toBe('echo');
+      expect(result.action).toBe('passthrough');
       expect(result.data).toBe('>');
-      expect(buffer.isActive()).toBe(true);
+      expect(buffer.isActive()).toBe(false);
     });
 
-    it('should start buffering on <', () => {
+    it('should passthrough < character (no buffering)', () => {
       const result = buffer.process('<');
-      expect(result.action).toBe('echo');
+      expect(result.action).toBe('passthrough');
       expect(result.data).toBe('<');
-      expect(buffer.isActive()).toBe(true);
-    });
-
-    it('should continue buffering >> ', () => {
-      buffer.process('>');
-      buffer.process('>');
-      const result = buffer.process(' ');
-      expect(result.action).toBe('echo');
-      expect(buffer.isActive()).toBe(true);
-      expect(buffer.getBuffer()).toBe('>> ');
-    });
-
-    it('should flush buffer on Enter', () => {
-      buffer.process('>');
-      buffer.process('>');
-      buffer.process(' ');
-      buffer.process('t');
-      buffer.process('e');
-      buffer.process('s');
-      buffer.process('t');
-
-      const result = buffer.process('\r');
-      expect(result.action).toBe('flush');
-      expect(result.data).toBe('>> test');
       expect(buffer.isActive()).toBe(false);
     });
 
-    it('should buffer << command', () => {
-      buffer.process('<');
-      buffer.process('<');
-
-      const result = buffer.process('\r');
-      expect(result.action).toBe('flush');
-      expect(result.data).toBe('<<');
-    });
-
-    it('should buffer >>> command', () => {
-      buffer.process('>');
-      buffer.process('>');
-      buffer.process('>');
-      buffer.process(' ');
-      buffer.process('x');
-
-      const result = buffer.process('\r');
-      expect(result.action).toBe('flush');
-      expect(result.data).toBe('>>> x');
-    });
-
-    it('should buffer >>! command', () => {
-      buffer.process('>');
-      buffer.process('>');
-      buffer.process('!');
-
-      const result = buffer.process('\r');
-      expect(result.action).toBe('flush');
-      expect(result.data).toBe('>>!');
-    });
-
-    it('should buffer >>@ command', () => {
-      buffer.process('>');
-      buffer.process('>');
-      buffer.process('@');
-
-      const result = buffer.process('\r');
-      expect(result.action).toBe('flush');
-      expect(result.data).toBe('>>@');
-    });
-  });
-
-  describe('non-command passthrough', () => {
-    it('should passthrough when buffer does not match command pattern', () => {
-      buffer.process('>');
-      // After '>a', this doesn't match any queue command pattern
-      const result = buffer.process('a');
+    it('should passthrough : character (queue mode handled by main.ts)', () => {
+      const result = buffer.process(':');
       expect(result.action).toBe('passthrough');
-      expect(result.data).toBe('>a');
+      expect(result.data).toBe(':');
       expect(buffer.isActive()).toBe(false);
     });
 
-    it('should passthrough when buffer becomes invalid', () => {
-      buffer.process('<');
-      // After '<a', this doesn't match any queue command pattern
-      const result = buffer.process('a');
+    it('should passthrough @ character', () => {
+      const result = buffer.process('@');
       expect(result.action).toBe('passthrough');
-      expect(result.data).toBe('<a');
+      expect(result.data).toBe('@');
       expect(buffer.isActive()).toBe(false);
     });
   });
 
-  describe('special key handling', () => {
-    it('should handle backspace while buffering', () => {
-      buffer.process('>');
-      buffer.process('>');
-      buffer.process(' ');
-      buffer.process('t');
-
-      const result = buffer.process('\x7f'); // DEL
-      expect(result.action).toBe('echo');
-      expect(result.data).toBe('\x1b[D \x1b[D'); // ANSI: left, space, left
-      expect(buffer.getBuffer()).toBe('>> ');
+  describe('special key handling (not buffering)', () => {
+    it('should passthrough backspace when not buffering', () => {
+      const result = buffer.process('\x7f');
+      expect(result.action).toBe('passthrough');
+      expect(result.data).toBe('\x7f');
     });
 
-    it('should stop buffering when backspace empties buffer', () => {
-      buffer.process('>');
-
-      buffer.process('\x7f'); // DEL
-      expect(buffer.isActive()).toBe(false);
-      expect(buffer.getBuffer()).toBe('');
+    it('should passthrough Escape when not buffering', () => {
+      const result = buffer.process('\x1b');
+      expect(result.action).toBe('passthrough');
+      expect(result.data).toBe('\x1b');
     });
 
-    it('should cancel buffering on Escape', () => {
-      buffer.process('>');
-      buffer.process('>');
-      buffer.process(' ');
-
-      const result = buffer.process('\x1b'); // ESC
-      expect(result.action).toBe('cancel');
-      expect(result.data).toBe('\x1b[D \x1b[D\x1b[D \x1b[D\x1b[D \x1b[D'); // erase 3 chars
-      expect(result.passthrough).toBe('\x1b');
-      expect(buffer.isActive()).toBe(false);
-    });
-
-    it('should cancel buffering on Ctrl+C', () => {
-      buffer.process('>');
-      buffer.process('>');
-
-      const result = buffer.process('\x03'); // Ctrl+C
-      expect(result.action).toBe('cancel');
-      expect(result.data).toBe('\x1b[D \x1b[D\x1b[D \x1b[D'); // erase 2 chars
-      expect(result.passthrough).toBe('\x03');
-      expect(buffer.isActive()).toBe(false);
+    it('should passthrough Ctrl+C when not buffering', () => {
+      const result = buffer.process('\x03');
+      expect(result.action).toBe('passthrough');
+      expect(result.data).toBe('\x03');
     });
   });
 
   describe('clear()', () => {
-    it('should clear buffer and stop buffering', () => {
-      buffer.process('>');
-      buffer.process('>');
-      buffer.process(' ');
-
+    it('should clear buffer', () => {
       buffer.clear();
-
       expect(buffer.getBuffer()).toBe('');
       expect(buffer.isActive()).toBe(false);
     });
   });
 
-  describe('complete command sequences', () => {
-    it('should handle full >> prompt sequence', () => {
-      const chars = '>> hello world';
-      let lastResult;
-
-      for (const char of chars) {
-        lastResult = buffer.process(char);
+  describe('all input passthroughs (no buffering logic)', () => {
+    it('should passthrough any sequence of characters', () => {
+      for (const char of 'hello world') {
+        const result = buffer.process(char);
+        expect(result.action).toBe('passthrough');
+        expect(result.data).toBe(char);
       }
-
-      // Flush with Enter
-      const result = buffer.process('\r');
-      expect(result.action).toBe('flush');
-      expect(result.data).toBe('>> hello world');
     });
 
-    it('should handle full << sequence', () => {
-      buffer.process('<');
-      buffer.process('<');
-
+    it('should passthrough Enter after regular characters', () => {
+      buffer.process('a');
+      buffer.process('b');
       const result = buffer.process('\r');
-      expect(result.action).toBe('flush');
-      expect(result.data).toBe('<<');
+      expect(result.action).toBe('passthrough');
+      expect(result.data).toBe('\r');
     });
   });
 });

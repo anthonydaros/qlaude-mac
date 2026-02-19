@@ -27,12 +27,12 @@ describe('telegram-messages', () => {
 
     it('should interpolate parameters', () => {
       const result = t('queue.items', 'ko', { count: 5 });
-      expect(result).toBe('📋 큐: 5개 항목');
+      expect(result).toBe('5개 항목');
     });
 
     it('should interpolate parameters in English', () => {
       const result = t('queue.items', 'en', { count: 3 });
-      expect(result).toBe('📋 Queue: 3 items');
+      expect(result).toBe('3 items');
     });
   });
 

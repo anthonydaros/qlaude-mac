@@ -7,6 +7,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import { logger } from './logger.js';
+import { messages as defaultMessages, type Language } from './telegram-messages.js';
 import type { QlaudeConfig, ConversationLogConfig, TelegramConfig, PatternsConfig, PatternCategoryConfig, PatternEntry } from '../types/config.js';
 import { DEFAULT_CONFIG, DEFAULT_CONVERSATION_LOG_CONFIG, DEFAULT_TELEGRAM_CONFIG } from '../types/config.js';
 import {
@@ -26,6 +27,7 @@ export const QLAUDE_DIR = '.qlaude';
 const CONFIG_FILE = 'config.json';
 const PATTERNS_FILE = 'patterns.json';
 const TELEGRAM_FILE = 'telegram.json';
+const MESSAGES_DIR = 'messages';
 const LEGACY_CONFIG_FILENAME = '.qlauderc.json';
 
 /**
@@ -93,18 +95,47 @@ function generatePatternsTemplate(): string {
 }
 
 /**
+ * Detect language from system locale (e.g., ko-KR → ko, en-US → en)
+ */
+export function detectLanguage(): Language {
+  try {
+    const locale = Intl.DateTimeFormat().resolvedOptions().locale;
+    return locale.startsWith('ko') ? 'ko' : 'en';
+  } catch {
+    return 'en';
+  }
+}
+
+/**
  * Generate telegram config template (telegram.json)
+ * Language is auto-detected; messages are loaded from messages/{language}.json
  */
 function generateTelegramTemplate(): string {
+  const language = detectLanguage();
   const template = {
     enabled: false,
     botToken: 'YOUR_BOT_TOKEN_HERE',
     chatId: 'YOUR_CHAT_ID_HERE',
-    language: 'en',
-    messages: {},
-    templates: {},
+    language,
   };
   return JSON.stringify(template, null, 2) + '\n';
+}
+
+/**
+ * Create message files for all supported languages in .qlaude/messages/
+ */
+function ensureMessageFiles(qlaudeDir: string): void {
+  const messagesDir = join(qlaudeDir, MESSAGES_DIR);
+  if (!existsSync(messagesDir)) {
+    mkdirSync(messagesDir, { recursive: true });
+  }
+  for (const lang of ['ko', 'en'] as Language[]) {
+    const filePath = join(messagesDir, `${lang}.json`);
+    if (!existsSync(filePath)) {
+      writeFileSync(filePath, JSON.stringify(defaultMessages[lang], null, 2) + '\n', 'utf-8');
+      logger.info({ path: filePath }, `Created message file: ${lang}.json`);
+    }
+  }
 }
 
 /**
@@ -143,6 +174,16 @@ function warnLegacyConfig(): void {
 }
 
 /**
+ * Check if this is the first run (no .qlaude/ directory in CWD or home).
+ */
+export function isFirstRun(): boolean {
+  const cwdDir = join(process.cwd(), QLAUDE_DIR);
+  if (existsSync(cwdDir)) return false;
+  const homeDir = join(homedir(), QLAUDE_DIR);
+  return !existsSync(homeDir);
+}
+
+/**
  * Create .qlaude directory with config templates if they don't exist.
  * If the directory exists but config files are missing, creates the missing files.
  * Returns true if any files were created.
@@ -178,6 +219,9 @@ export function ensureConfigDir(): boolean {
         created = true;
       }
     }
+
+    // Create message files for all supported languages
+    ensureMessageFiles(cwdDir);
 
     if (created) {
       logger.info({ path: cwdDir }, 'Config files created in .qlaude directory');
@@ -219,6 +263,22 @@ export function loadConfig(): typeof DEFAULT_CONFIG & Pick<QlaudeConfig, 'patter
   const common = commonRaw ? validateCommonConfig(commonRaw) : null;
   const patterns = patternsRaw ? validatePatternsConfig(patternsRaw) : null;
   const telegram = telegramRaw ? validateTelegramConfig(telegramRaw) : null;
+
+  // Load language-specific message file (messages/{language}.json)
+  const lang = telegram?.language ?? DEFAULT_TELEGRAM_CONFIG.language;
+  const msgFileRaw = loadJsonFile(join(qlaudeDir, MESSAGES_DIR, `${lang}.json`));
+  if (msgFileRaw && typeof msgFileRaw === 'object' && msgFileRaw !== null) {
+    const fileMessages: Record<string, string> = {};
+    for (const [k, v] of Object.entries(msgFileRaw as Record<string, unknown>)) {
+      if (typeof v === 'string') fileMessages[k] = v;
+    }
+    // Message file is the base; telegram.json messages override on top
+    const mergedMessages = { ...fileMessages, ...telegram?.messages };
+    if (!telegram) {
+      return mergeAllWithDefaults(common, patterns, { messages: mergedMessages });
+    }
+    telegram.messages = mergedMessages;
+  }
 
   return mergeAllWithDefaults(common, patterns, telegram);
 }

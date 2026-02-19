@@ -194,7 +194,7 @@ export class StateDetector extends EventEmitter {
 
       // Parse options if SELECTION_PROMPT detected
       const metadata: StateMetadata = {
-        bufferSnapshot: content.slice(-500),
+        bufferSnapshot: content.slice(-1000),
       };
 
       if (detectedState === 'SELECTION_PROMPT') {
@@ -233,12 +233,14 @@ export class StateDetector extends EventEmitter {
     const options: ParsedOption[] = [];
     const seenNumbers = new Set<number>();
 
-    for (const line of lines) {
-      const match = line.match(this.patterns.optionParse.pattern);
+    // Parse bottom-to-top so the MOST RECENT selection prompt (at screen bottom)
+    // takes priority when multiple prompts are visible on screen
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const match = lines[i].match(this.patterns.optionParse.pattern);
       if (match) {
         const num = parseInt(match[1], 10);
         const text = match[2].trim();
-        // Avoid duplicates
+        // Avoid duplicates — bottom (most recent) wins
         if (!seenNumbers.has(num) && text.length > 0) {
           seenNumbers.add(num);
           options.push({

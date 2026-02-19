@@ -43,6 +43,8 @@ function createMockDisplay() {
   return {
     showMessage: vi.fn(),
     updateStatusBar: vi.fn(),
+    setPaused: vi.fn(),
+    setCurrentItem: vi.fn(),
   };
 }
 
@@ -108,37 +110,30 @@ describe('AutoExecutor', () => {
       expect(mockPtyWrapper.write).toHaveBeenCalledWith('\r');
     });
 
-    it('should show message before execution (AC 3)', async () => {
+    it('should set current item on display before execution (AC 3)', async () => {
       // Given
       const item = { prompt: 'test prompt', isNewSession: false };
       mockQueueManager.popNextItem.mockResolvedValue(item);
 
       // When
       mockStateDetector.emit('state_change', { type: 'READY', timestamp: Date.now() });
-      await vi.waitFor(() => expect(mockDisplay.showMessage).toHaveBeenCalled());
+      await vi.waitFor(() => expect(mockDisplay.setCurrentItem).toHaveBeenCalled());
 
       // Then
-      expect(mockDisplay.showMessage).toHaveBeenCalledWith(
-        'info',
-        expect.stringContaining('[Queue] Executing:')
-      );
+      expect(mockDisplay.setCurrentItem).toHaveBeenCalledWith(item);
     });
 
-    it('should truncate long prompts in message display', async () => {
+    it('should set current item on display for persistent visibility', async () => {
       // Given
-      const longPrompt = 'A'.repeat(50);
-      const item = { prompt: longPrompt, isNewSession: false };
+      const item = { prompt: 'test prompt', isNewSession: false };
       mockQueueManager.popNextItem.mockResolvedValue(item);
 
       // When
       mockStateDetector.emit('state_change', { type: 'READY', timestamp: Date.now() });
-      await vi.waitFor(() => expect(mockDisplay.showMessage).toHaveBeenCalled());
+      await vi.waitFor(() => expect(mockDisplay.setCurrentItem).toHaveBeenCalled());
 
       // Then
-      expect(mockDisplay.showMessage).toHaveBeenCalledWith(
-        'info',
-        expect.stringContaining('...')
-      );
+      expect(mockDisplay.setCurrentItem).toHaveBeenCalledWith(item);
     });
   });
 
@@ -602,7 +597,7 @@ describe('AutoExecutor', () => {
         // Then
         expect(mockPtyWrapper.write).toHaveBeenCalledWith('resume test');
         expect(mockPtyWrapper.write).toHaveBeenCalledWith('\r');
-        expect(mockDisplay.showMessage).toHaveBeenCalledWith('info', expect.stringContaining('[Queue] Executing:'));
+        expect(mockDisplay.setCurrentItem).toHaveBeenCalledWith(expect.objectContaining({ prompt: 'resume test' }));
       });
     });
   });
@@ -630,6 +625,48 @@ describe('AutoExecutor', () => {
 
       // Then
       expect(autoExecutor.isEnabled()).toBe(true);
+    });
+  });
+
+  describe('Model switch handling', () => {
+    it('should set current item on display for model switch', async () => {
+      const item = { prompt: '/model opus', isNewSession: false, modelName: 'opus' };
+      mockQueueManager.popNextItem.mockResolvedValue(item);
+
+      mockStateDetector.emit('state_change', { type: 'READY', timestamp: Date.now() });
+      await vi.waitFor(() => expect(mockDisplay.setCurrentItem).toHaveBeenCalled());
+
+      expect(mockDisplay.setCurrentItem).toHaveBeenCalledWith(item);
+    });
+
+    it('should send /model command to PTY', async () => {
+      const item = { prompt: '/model opus', isNewSession: false, modelName: 'opus' };
+      mockQueueManager.popNextItem.mockResolvedValue(item);
+
+      mockStateDetector.emit('state_change', { type: 'READY', timestamp: Date.now() });
+      await vi.waitFor(() => expect(mockPtyWrapper.write).toHaveBeenCalled());
+
+      expect(mockPtyWrapper.write).toHaveBeenCalledWith('/model opus');
+    });
+
+  });
+
+  describe('Delay handling', () => {
+    it('should show delay message and not write to PTY', async () => {
+      const item = { prompt: '', isNewSession: false, delayMs: 100 };
+      mockQueueManager.popNextItem
+        .mockResolvedValueOnce(item)
+        .mockResolvedValueOnce(null);
+
+      mockStateDetector.emit('state_change', { type: 'READY', timestamp: Date.now() });
+      await vi.waitFor(() => expect(mockDisplay.showMessage).toHaveBeenCalled());
+
+      expect(mockDisplay.showMessage).toHaveBeenCalledWith(
+        'info',
+        '[Queue] Waiting 100ms...'
+      );
+      // PTY should not be written to for delay items
+      expect(mockPtyWrapper.write).not.toHaveBeenCalled();
     });
   });
 });

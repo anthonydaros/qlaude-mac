@@ -2,419 +2,304 @@ import { describe, it, expect } from 'vitest';
 import { parse, isQueueCommand } from '../../src/input-parser.js';
 
 describe('InputParser', () => {
-  describe('parse()', () => {
-    it('should parse >> command as QUEUE_ADD', () => {
-      // Given
-      const input = '>> test prompt';
-
-      // When
-      const result = parse(input);
-
-      // Then
+  describe('parse() - :command form', () => {
+    // :add
+    it('should parse ":add prompt" as QUEUE_ADD', () => {
+      const result = parse(':add test prompt');
       expect(result.type).toBe('QUEUE_ADD');
       expect(result.prompt).toBe('test prompt');
-      expect(result.rawInput).toBe(input);
     });
 
-    it('should handle empty prompt after >> (returns undefined prompt)', () => {
-      // Given
-      const input = '>> ';
+    it('should parse ":ADD" (uppercase) as QUEUE_ADD', () => {
+      const result = parse(':ADD hello');
+      expect(result.type).toBe('QUEUE_ADD');
+      expect(result.prompt).toBe('hello');
+    });
 
-      // When
-      const result = parse(input);
-
-      // Then
+    it('should handle ":add" without prompt (returns undefined)', () => {
+      const result = parse(':add');
       expect(result.type).toBe('QUEUE_ADD');
       expect(result.prompt).toBeUndefined();
-      expect(result.rawInput).toBe(input);
     });
 
-    it('should return PASSTHROUGH for >> without space', () => {
-      // Given
-      const input = '>>';
+    // :drop
+    it('should parse ":drop" as QUEUE_REMOVE', () => {
+      expect(parse(':drop').type).toBe('QUEUE_REMOVE');
+    });
 
-      // When
-      const result = parse(input);
+    // :clear
+    it('should parse ":clear" as QUEUE_CLEAR', () => {
+      expect(parse(':clear').type).toBe('QUEUE_CLEAR');
+    });
 
-      // Then
-      expect(result.type).toBe('PASSTHROUGH');
+    // :save
+    it('should parse ":save name" as QUEUE_SAVE_SESSION', () => {
+      const result = parse(':save checkpoint-v1');
+      expect(result.type).toBe('QUEUE_SAVE_SESSION');
+      expect(result.label).toBe('checkpoint-v1');
+    });
+
+    it('should handle ":save" without name (label undefined)', () => {
+      const result = parse(':save');
+      expect(result.type).toBe('QUEUE_SAVE_SESSION');
+      expect(result.label).toBeUndefined();
+    });
+
+    // :load (standalone, no inline prompt)
+    it('should parse ":load name" as QUEUE_LOAD_SESSION', () => {
+      const result = parse(':load checkpoint-v1');
+      expect(result.type).toBe('QUEUE_LOAD_SESSION');
+      expect(result.label).toBe('checkpoint-v1');
       expect(result.prompt).toBeUndefined();
-      expect(result.rawInput).toBe(input);
     });
 
-    it('should return PASSTHROUGH for >>text without space', () => {
-      // Given
-      const input = '>>test';
-
-      // When
-      const result = parse(input);
-
-      // Then
-      expect(result.type).toBe('PASSTHROUGH');
+    it('should parse ":load name extra" — label is full args', () => {
+      const result = parse(':load checkpoint-v1 continue work');
+      expect(result.type).toBe('QUEUE_LOAD_SESSION');
+      expect(result.label).toBe('checkpoint-v1 continue work');
       expect(result.prompt).toBeUndefined();
-      expect(result.rawInput).toBe(input);
     });
 
+    it('should handle ":load" without name (label undefined)', () => {
+      const result = parse(':load');
+      expect(result.type).toBe('QUEUE_LOAD_SESSION');
+      expect(result.label).toBeUndefined();
+    });
+
+    // :model
+    it('should parse ":model opus" as META_MODEL', () => {
+      const result = parse(':model opus');
+      expect(result.type).toBe('META_MODEL');
+      expect(result.label).toBe('opus');
+    });
+
+    it('should handle ":model" without name (label undefined)', () => {
+      const result = parse(':model');
+      expect(result.type).toBe('META_MODEL');
+      expect(result.label).toBeUndefined();
+    });
+
+    it('should parse ":MODEL Sonnet" (uppercase) as META_MODEL', () => {
+      const result = parse(':MODEL Sonnet');
+      expect(result.type).toBe('META_MODEL');
+      expect(result.label).toBe('Sonnet');
+    });
+
+    // System commands
+    it('should parse ":reload" as META_RELOAD', () => {
+      expect(parse(':reload').type).toBe('META_RELOAD');
+    });
+
+    it('should parse ":RELOAD" (uppercase) as META_RELOAD', () => {
+      expect(parse(':RELOAD').type).toBe('META_RELOAD');
+    });
+
+    it('should parse ":status" as META_STATUS', () => {
+      expect(parse(':status').type).toBe('META_STATUS');
+    });
+
+    it('should parse ":pause" as META_PAUSE', () => {
+      expect(parse(':pause').type).toBe('META_PAUSE');
+    });
+
+    it('should parse ":resume" as META_RESUME', () => {
+      expect(parse(':resume').type).toBe('META_RESUME');
+    });
+
+    it('should parse ":help" as META_HELP', () => {
+      expect(parse(':help').type).toBe('META_HELP');
+    });
+
+    it('should parse ":list" as META_LIST', () => {
+      expect(parse(':list').type).toBe('META_LIST');
+    });
+  });
+
+  describe('parse() - no shortcuts', () => {
+    it('should NOT parse "> prompt" as QUEUE_ADD (shortcuts removed)', () => {
+      expect(parse('> test prompt').type).toBe('PASSTHROUGH');
+    });
+
+    it('should NOT parse ">>" as QUEUE_NEW_SESSION (shortcuts removed)', () => {
+      expect(parse('>>').type).toBe('PASSTHROUGH');
+    });
+
+    it('should NOT parse ">> prompt" as QUEUE_NEW_SESSION (shortcuts removed)', () => {
+      expect(parse('>> test').type).toBe('PASSTHROUGH');
+    });
+
+    it('should NOT parse "<" as QUEUE_REMOVE (shortcuts removed)', () => {
+      expect(parse('<').type).toBe('PASSTHROUGH');
+    });
+
+    it('should NOT parse "< " as QUEUE_REMOVE (shortcuts removed)', () => {
+      expect(parse('< ').type).toBe('PASSTHROUGH');
+    });
+  });
+
+  describe('parse() - removed commands', () => {
+    it('should NOT parse ":bp" as a command (bp removed)', () => {
+      expect(parse(':bp').type).toBe('PASSTHROUGH');
+    });
+
+    it('should NOT parse ":bp comment" as a command (bp removed)', () => {
+      expect(parse(':bp check here').type).toBe('PASSTHROUGH');
+    });
+
+    it('should NOT parse ":new" as a command (new removed, use :add @new)', () => {
+      expect(parse(':new').type).toBe('PASSTHROUGH');
+    });
+
+    it('should NOT parse ":del" as a command (del removed, use :drop)', () => {
+      expect(parse(':del').type).toBe('PASSTHROUGH');
+    });
+  });
+
+  describe('parse() - :add with @ directives', () => {
+    it('should parse ":add @new" as QUEUE_ADD with prompt "@new"', () => {
+      const result = parse(':add @new');
+      expect(result.type).toBe('QUEUE_ADD');
+      expect(result.prompt).toBe('@new');
+    });
+
+    it('should parse ":add @pause reason" as QUEUE_ADD', () => {
+      const result = parse(':add @pause check here');
+      expect(result.type).toBe('QUEUE_ADD');
+      expect(result.prompt).toBe('@pause check here');
+    });
+
+    it('should parse ":add @save name" as QUEUE_ADD', () => {
+      const result = parse(':add @save checkpoint');
+      expect(result.type).toBe('QUEUE_ADD');
+      expect(result.prompt).toBe('@save checkpoint');
+    });
+
+    it('should parse ":add @load name" as QUEUE_ADD', () => {
+      const result = parse(':add @load checkpoint');
+      expect(result.type).toBe('QUEUE_ADD');
+      expect(result.prompt).toBe('@load checkpoint');
+    });
+
+    it('should parse ":add \\@text" as QUEUE_ADD (escaped @)', () => {
+      const result = parse(':add \\@username');
+      expect(result.type).toBe('QUEUE_ADD');
+      expect(result.prompt).toBe('\\@username');
+    });
+  });
+
+  describe('parse() - passthrough', () => {
     it('should return PASSTHROUGH for regular input', () => {
-      // Given
-      const input = 'regular input text';
-
-      // When
-      const result = parse(input);
-
-      // Then
+      const result = parse('regular input text');
       expect(result.type).toBe('PASSTHROUGH');
-      expect(result.prompt).toBeUndefined();
-      expect(result.rawInput).toBe(input);
+      expect(result.rawInput).toBe('regular input text');
     });
 
-    it('should return PASSTHROUGH for single > input', () => {
-      // Given
-      const input = '> test';
-
-      // When
-      const result = parse(input);
-
-      // Then
-      expect(result.type).toBe('PASSTHROUGH');
-      expect(result.prompt).toBeUndefined();
-      expect(result.rawInput).toBe(input);
+    it('should return PASSTHROUGH for unknown :command', () => {
+      expect(parse(':unknown').type).toBe('PASSTHROUGH');
     });
 
-    it('should trim whitespace from prompt', () => {
-      // Given - '>> ' followed by spaces and text
-      const input = '>>   test with spaces   ';
-
-      // When
-      const result = parse(input);
-
-      // Then - starts with '>> ' so it's QUEUE_ADD with trimmed prompt
-      expect(result.type).toBe('QUEUE_ADD');
-      expect(result.prompt).toBe('test with spaces');
+    it('should return PASSTHROUGH for ":something random"', () => {
+      expect(parse(':foobar hello').type).toBe('PASSTHROUGH');
     });
 
-    it('should handle prompt with special characters', () => {
-      // Given
-      const input = '>> prompt with $pecial ch@rs!';
+    it('should preserve rawInput on all results', () => {
+      const input = ':add test';
+      expect(parse(input).rawInput).toBe(input);
+    });
+  });
 
-      // When
-      const result = parse(input);
-
-      // Then
+  describe('parse() - edge cases', () => {
+    it('should handle :add with special characters', () => {
+      const result = parse(':add prompt with $pecial ch@rs!');
       expect(result.type).toBe('QUEUE_ADD');
       expect(result.prompt).toBe('prompt with $pecial ch@rs!');
     });
 
-    it('should handle multiline prompt (takes first line only)', () => {
-      // Given
-      const input = '>> line1\nline2';
-
-      // When
-      const result = parse(input);
-
-      // Then
+    it('should handle :add as escape for : prompts', () => {
+      const result = parse(':add :new something');
       expect(result.type).toBe('QUEUE_ADD');
-      expect(result.prompt).toBe('line1\nline2');
-    });
-
-    // QUEUE_NEW_SESSION tests (Story 2.4)
-    it('should parse >>> command as QUEUE_NEW_SESSION', () => {
-      // Given
-      const input = '>>> test prompt';
-
-      // When
-      const result = parse(input);
-
-      // Then
-      expect(result.type).toBe('QUEUE_NEW_SESSION');
-      expect(result.prompt).toBe('test prompt');
-      expect(result.rawInput).toBe(input);
-    });
-
-    it('should handle empty prompt after >>> (returns undefined prompt)', () => {
-      // Given
-      const input = '>>> ';
-
-      // When
-      const result = parse(input);
-
-      // Then
-      expect(result.type).toBe('QUEUE_NEW_SESSION');
-      expect(result.prompt).toBeUndefined();
-      expect(result.rawInput).toBe(input);
-    });
-
-    it('should return QUEUE_NEW_SESSION for >>> without space', () => {
-      // Given
-      const input = '>>>';
-
-      // When
-      const result = parse(input);
-
-      // Then
-      expect(result.type).toBe('QUEUE_NEW_SESSION');
-      expect(result.prompt).toBeUndefined(); // No prompt, just new session
-      expect(result.rawInput).toBe(input);
-    });
-
-    it('should return PASSTHROUGH for >>>text without space', () => {
-      // Given
-      const input = '>>>test';
-
-      // When
-      const result = parse(input);
-
-      // Then
-      expect(result.type).toBe('PASSTHROUGH');
-      expect(result.prompt).toBeUndefined();
-      expect(result.rawInput).toBe(input);
-    });
-
-    it('should return QUEUE_ADD for >> > (space before third >)', () => {
-      // Given
-      const input = '>> >';
-
-      // When
-      const result = parse(input);
-
-      // Then
-      expect(result.type).toBe('QUEUE_ADD');
-      expect(result.prompt).toBe('>');
-      expect(result.rawInput).toBe(input);
-    });
-
-    // META_RELOAD tests (colon commands)
-    it('should parse :reload command as META_RELOAD', () => {
-      // Given
-      const input = ':reload';
-
-      // When
-      const result = parse(input);
-
-      // Then
-      expect(result.type).toBe('META_RELOAD');
-      expect(result.rawInput).toBe(input);
-    });
-
-    it('should parse :RELOAD (uppercase) as META_RELOAD', () => {
-      // Given
-      const input = ':RELOAD';
-
-      // When
-      const result = parse(input);
-
-      // Then
-      expect(result.type).toBe('META_RELOAD');
-      expect(result.rawInput).toBe(input);
-    });
-
-    // META_STATUS tests
-    it('should parse :status command as META_STATUS', () => {
-      // Given
-      const input = ':status';
-
-      // When
-      const result = parse(input);
-
-      // Then
-      expect(result.type).toBe('META_STATUS');
-      expect(result.rawInput).toBe(input);
-    });
-
-    // META_PAUSE tests
-    it('should parse :pause command as META_PAUSE', () => {
-      // Given
-      const input = ':pause';
-
-      // When
-      const result = parse(input);
-
-      // Then
-      expect(result.type).toBe('META_PAUSE');
-      expect(result.rawInput).toBe(input);
-    });
-
-    // META_RESUME tests
-    it('should parse :resume command as META_RESUME', () => {
-      // Given
-      const input = ':resume';
-
-      // When
-      const result = parse(input);
-
-      // Then
-      expect(result.type).toBe('META_RESUME');
-      expect(result.rawInput).toBe(input);
-    });
-
-    it('should return PASSTHROUGH for unknown :command', () => {
-      // Given
-      const input = ':unknown';
-
-      // When
-      const result = parse(input);
-
-      // Then
-      expect(result.type).toBe('PASSTHROUGH');
-      expect(result.rawInput).toBe(input);
-    });
-
-    it('should parse ">> !" as QUEUE_ADD with prompt "!"', () => {
-      // Given
-      const input = '>> !';
-
-      // When
-      const result = parse(input);
-
-      // Then
-      expect(result.type).toBe('QUEUE_ADD');
-      expect(result.prompt).toBe('!');
-    });
-
-    it('should parse ">> @" as QUEUE_ADD with prompt "@"', () => {
-      // Given
-      const input = '>> @';
-
-      // When
-      const result = parse(input);
-
-      // Then
-      expect(result.type).toBe('QUEUE_ADD');
-      expect(result.prompt).toBe('@');
-    });
-
-    // QUEUE_REMOVE tests (Story 2.3)
-    it('should parse << command as QUEUE_REMOVE', () => {
-      // Given
-      const input = '<<';
-
-      // When
-      const result = parse(input);
-
-      // Then
-      expect(result.type).toBe('QUEUE_REMOVE');
-      expect(result.rawInput).toBe(input);
-    });
-
-    it('should parse << with trailing space as QUEUE_REMOVE', () => {
-      // Given
-      const input = '<< ';
-
-      // When
-      const result = parse(input);
-
-      // Then
-      expect(result.type).toBe('QUEUE_REMOVE');
-      expect(result.rawInput).toBe(input);
-    });
-
-    it('should parse << with trailing text as QUEUE_REMOVE', () => {
-      // Given
-      const input = '<<abc';
-
-      // When
-      const result = parse(input);
-
-      // Then
-      expect(result.type).toBe('QUEUE_REMOVE');
-      expect(result.rawInput).toBe(input);
-    });
-
-    it('should return PASSTHROUGH for single <', () => {
-      // Given
-      const input = '<';
-
-      // When
-      const result = parse(input);
-
-      // Then
-      expect(result.type).toBe('PASSTHROUGH');
-      expect(result.rawInput).toBe(input);
-    });
-
-    it('should return PASSTHROUGH for < < with space between', () => {
-      // Given
-      const input = '< <';
-
-      // When
-      const result = parse(input);
-
-      // Then
-      expect(result.type).toBe('PASSTHROUGH');
-      expect(result.rawInput).toBe(input);
+      expect(result.prompt).toBe(':new something');
     });
   });
 
   describe('isQueueCommand()', () => {
-    it('should return true for >> command with content', () => {
-      expect(isQueueCommand('>> test')).toBe(true);
+    // :commands
+    it('should return true for ":add prompt"', () => {
+      expect(isQueueCommand(':add test')).toBe(true);
     });
 
-    it('should return true for >> command with only space', () => {
-      expect(isQueueCommand('>> ')).toBe(true);
+    it('should return true for ":drop"', () => {
+      expect(isQueueCommand(':drop')).toBe(true);
     });
 
+    it('should return true for ":save name"', () => {
+      expect(isQueueCommand(':save name')).toBe(true);
+    });
+
+    it('should return true for ":load name"', () => {
+      expect(isQueueCommand(':load name')).toBe(true);
+    });
+
+    it('should return true for ":clear"', () => {
+      expect(isQueueCommand(':clear')).toBe(true);
+    });
+
+    it('should return true for ":reload"', () => {
+      expect(isQueueCommand(':reload')).toBe(true);
+    });
+
+    it('should return true for ":status"', () => {
+      expect(isQueueCommand(':status')).toBe(true);
+    });
+
+    it('should return true for ":pause"', () => {
+      expect(isQueueCommand(':pause')).toBe(true);
+    });
+
+    it('should return true for ":resume"', () => {
+      expect(isQueueCommand(':resume')).toBe(true);
+    });
+
+    it('should return true for ":help"', () => {
+      expect(isQueueCommand(':help')).toBe(true);
+    });
+
+    it('should return true for ":list"', () => {
+      expect(isQueueCommand(':list')).toBe(true);
+    });
+
+    // Shortcuts removed
+    it('should return false for "> prompt" (shortcuts removed)', () => {
+      expect(isQueueCommand('> test')).toBe(false);
+    });
+
+    it('should return false for ">>" (shortcuts removed)', () => {
+      expect(isQueueCommand('>>')).toBe(false);
+    });
+
+    it('should return false for "<" (shortcuts removed)', () => {
+      expect(isQueueCommand('<')).toBe(false);
+    });
+
+    it('should return false for ":bp" (bp removed)', () => {
+      expect(isQueueCommand(':bp')).toBe(false);
+    });
+
+    it('should return false for ":new" (new removed)', () => {
+      expect(isQueueCommand(':new')).toBe(false);
+    });
+
+    it('should return false for ":del" (del removed)', () => {
+      expect(isQueueCommand(':del')).toBe(false);
+    });
+
+    // Passthrough
     it('should return false for regular input', () => {
       expect(isQueueCommand('regular input')).toBe(false);
     });
 
-    it('should return false for >> without space', () => {
-      expect(isQueueCommand('>>')).toBe(false);
-    });
-
-    it('should return false for >>text without space', () => {
-      expect(isQueueCommand('>>test')).toBe(false);
-    });
-
-    it('should return false for single > input', () => {
-      expect(isQueueCommand('> test')).toBe(false);
-    });
-
     it('should return false for empty input', () => {
       expect(isQueueCommand('')).toBe(false);
-    });
-
-    // QUEUE_REMOVE tests (Story 2.3)
-    it('should return true for << command', () => {
-      expect(isQueueCommand('<<')).toBe(true);
-    });
-
-    it('should return false for single <', () => {
-      expect(isQueueCommand('<')).toBe(false);
-    });
-
-    it('should return false for < < with space between', () => {
-      expect(isQueueCommand('< <')).toBe(false);
-    });
-
-    // QUEUE_NEW_SESSION tests (Story 2.4)
-    it('should return true for >>> command with content', () => {
-      expect(isQueueCommand('>>> test')).toBe(true);
-    });
-
-    it('should return true for >>> command with only space', () => {
-      expect(isQueueCommand('>>> ')).toBe(true);
-    });
-
-    it('should return false for >>> without space', () => {
-      expect(isQueueCommand('>>>')).toBe(false);
-    });
-
-    // META commands (colon prefix)
-    it('should return true for :reload command', () => {
-      expect(isQueueCommand(':reload')).toBe(true);
-    });
-
-    it('should return true for :status command', () => {
-      expect(isQueueCommand(':status')).toBe(true);
-    });
-
-    it('should return true for :pause command', () => {
-      expect(isQueueCommand(':pause')).toBe(true);
-    });
-
-    it('should return true for :resume command', () => {
-      expect(isQueueCommand(':resume')).toBe(true);
     });
 
     it('should return false for unknown :command', () => {

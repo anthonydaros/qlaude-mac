@@ -29,6 +29,18 @@ qlaude --resume        # Resume last session
 qlaude --model opus    # Use specific model
 ```
 
+### Batch Mode
+
+qlaude uses triple-dash (`---`) prefix for its own flags (avoids collision with Claude Code flags):
+
+```bash
+qlaude ---run                      # Execute queue and auto-exit
+qlaude ---file tasks.txt           # Load queue file and start
+qlaude ---run ---file tasks.txt    # Load, execute, and exit with report
+```
+
+In batch mode (`---run`), qlaude auto-exits when the queue completes (exit 0) or fails (exit 1), and writes a report to `.qlaude/batch-report.json`.
+
 ## Features
 
 ### Queue System
@@ -37,32 +49,31 @@ Add prompts to a queue that executes automatically when Claude finishes each tas
 
 | Command | Description |
 |---------|-------------|
-| `>> prompt` | Add prompt to queue |
-| `>>> prompt` | Add prompt as new session |
-| `>>#` or `>># comment` | Add breakpoint (pauses execution) |
-| `<<` | Remove last item from queue |
+| `:add prompt` | Add prompt to queue |
+| `:add @directive` | Add `@new`, `@pause`, `@save`, `@load`, `@model`, `@delay` to queue |
+| `:drop` | Remove last item from queue |
+| `:clear` | Clear all queue items |
+| `:help` | Show command reference |
+| `:list` | Show queue contents |
 
-Enter queue input mode by pressing `:` or `>` when the prompt is empty.
+Enter queue input mode by pressing `:` when the prompt is empty.
 
 ### Multiline Prompts
 
 ```
->>(
+:(
 First line of prompt
 Second line of prompt
->>)
+:)
 ```
 
-Use `>>>(` for multiline with new session.
-
-### Session Labels
+### Session Management
 
 Save and restore Claude Code sessions by name:
 
 ```
->>{Label:my-feature}          # Save current session
->>{Load:my-feature}           # Resume saved session
->>>{Load:my-feature} prompt   # Resume + execute prompt
+:save my-feature              # Save current session (immediate)
+:load my-feature              # Resume saved session (immediate)
 ```
 
 ### Queue File
@@ -70,15 +81,21 @@ Save and restore Claude Code sessions by name:
 Pre-load prompts by creating `.qlaude/queue` in your project root:
 
 ```
+# Comments start with #
 First prompt to execute
->>> Start new session for this prompt
->>(
+@new
+Start new session for this prompt
+@(
 Multiline
 prompt here
->>)
->># Pause here for review
->>{Label:checkpoint}
+@)
+@pause Pause here for review
+@save checkpoint
+@model sonnet
+@delay 3000
 ```
+
+Note: queue files use `@` prefix directives (not `:`). `:` commands are interactive only. All directives are case-insensitive.
 
 ### Meta Commands
 
@@ -88,6 +105,9 @@ prompt here
 | `:resume` | Resume auto-execution |
 | `:status` | Toggle status bar |
 | `:reload` | Reload queue from file |
+| `:help` | Show command reference |
+| `:list` | Show queue contents |
+| `:model name` | Switch Claude Code model (sends `/model`) |
 
 ### Telegram Integration
 

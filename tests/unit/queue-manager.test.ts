@@ -27,32 +27,23 @@ describe('QueueManager', () => {
 
   describe('constructor', () => {
     it('should use default file path .qlaude/queue', () => {
-      // Given/When
       const manager = new QueueManager();
-
-      // Then
       expect(manager['filePath']).toBe('.qlaude/queue');
     });
 
     it('should accept custom file path', () => {
-      // Given/When
       const manager = new QueueManager('/custom/path/.queue');
-
-      // Then
       expect(manager['filePath']).toBe('/custom/path/.queue');
     });
   });
 
   describe('addItem', () => {
     it('should add regular prompt to queue', async () => {
-      // Given
       vi.mocked(fs.readFile).mockRejectedValue({ code: 'ENOENT' });
       vi.mocked(fs.writeFile).mockResolvedValue(undefined);
 
-      // When
       await queueManager.addItem('test prompt');
 
-      // Then
       const items = queueManager.getItems();
       expect(items).toHaveLength(1);
       expect(items[0].prompt).toBe('test prompt');
@@ -60,35 +51,28 @@ describe('QueueManager', () => {
     });
 
     it('should add new session marker to queue', async () => {
-      // Given
       vi.mocked(fs.readFile).mockRejectedValue({ code: 'ENOENT' });
       vi.mocked(fs.writeFile).mockResolvedValue(undefined);
 
-      // When
       await queueManager.addItem('new session prompt', true);
 
-      // Then
       const items = queueManager.getItems();
       expect(items[0].isNewSession).toBe(true);
     });
 
     it('should set addedAt date when adding item', async () => {
-      // Given
       vi.mocked(fs.readFile).mockRejectedValue({ code: 'ENOENT' });
       vi.mocked(fs.writeFile).mockResolvedValue(undefined);
       const now = new Date('2026-01-28T12:00:00Z');
       vi.setSystemTime(now);
 
-      // When
       await queueManager.addItem('test prompt');
 
-      // Then
       const items = queueManager.getItems();
       expect(items[0].addedAt).toEqual(now);
     });
 
     it('should serialize concurrent addItem calls without losing data', async () => {
-      // Given - use real timers to model async write interleaving
       vi.useRealTimers();
       let fileContent = '';
       let writeCount = 0;
@@ -96,20 +80,17 @@ describe('QueueManager', () => {
       vi.mocked(fs.readFile).mockImplementation(async () => fileContent);
       vi.mocked(fs.writeFile).mockImplementation(async (_path, content) => {
         writeCount++;
-        // Delay first write so a race would overwrite newer content without locking
         if (writeCount === 1) {
           await new Promise(resolve => setTimeout(resolve, 30));
         }
         fileContent = String(content);
       });
 
-      // When
       await Promise.all([
         queueManager.addItem('first'),
         queueManager.addItem('second'),
       ]);
 
-      // Then
       expect(fileContent).toBe('first\nsecond');
       expect(queueManager.getItems().map(i => i.prompt)).toEqual(['first', 'second']);
     });
@@ -117,153 +98,239 @@ describe('QueueManager', () => {
 
   describe('removeLastItem', () => {
     it('should remove and return last item', async () => {
-      // Given
       vi.mocked(fs.readFile).mockResolvedValue('prompt1\nprompt2');
       vi.mocked(fs.writeFile).mockResolvedValue(undefined);
       await queueManager.reload();
 
-      // When
       const removed = await queueManager.removeLastItem();
 
-      // Then
       expect(removed?.prompt).toBe('prompt2');
       expect(queueManager.getLength()).toBe(1);
     });
 
     it('should return null when queue is empty', async () => {
-      // Given
       vi.mocked(fs.readFile).mockRejectedValue({ code: 'ENOENT' });
 
-      // When
       const removed = await queueManager.removeLastItem();
 
-      // Then
       expect(removed).toBeNull();
     });
   });
 
   describe('getNextItem', () => {
     it('should return first item without removing it', async () => {
-      // Given
       vi.mocked(fs.readFile).mockResolvedValue('prompt1\nprompt2');
       await queueManager.reload();
 
-      // When
       const item = queueManager.getNextItem();
 
-      // Then
       expect(item?.prompt).toBe('prompt1');
       expect(queueManager.getLength()).toBe(2);
     });
 
     it('should return null when queue is empty', async () => {
-      // Given
       vi.mocked(fs.readFile).mockRejectedValue({ code: 'ENOENT' });
       await queueManager.reload();
 
-      // When
-      const item = queueManager.getNextItem();
-
-      // Then
-      expect(item).toBeNull();
+      expect(queueManager.getNextItem()).toBeNull();
     });
   });
 
   describe('popNextItem', () => {
     it('should remove and return first item', async () => {
-      // Given
       vi.mocked(fs.readFile).mockResolvedValue('prompt1\nprompt2');
       vi.mocked(fs.writeFile).mockResolvedValue(undefined);
       await queueManager.reload();
 
-      // When
       const item = await queueManager.popNextItem();
 
-      // Then
       expect(item?.prompt).toBe('prompt1');
       expect(queueManager.getLength()).toBe(1);
       expect(queueManager.getNextItem()?.prompt).toBe('prompt2');
     });
 
     it('should return null when queue is empty', async () => {
-      // Given
       vi.mocked(fs.readFile).mockRejectedValue({ code: 'ENOENT' });
 
-      // When
-      const item = await queueManager.popNextItem();
-
-      // Then
-      expect(item).toBeNull();
+      expect(await queueManager.popNextItem()).toBeNull();
     });
   });
 
-  describe('parseQueueFile (via reload)', () => {
-    it('should parse regular prompts', async () => {
-      // Given
-      const content = 'prompt1\nprompt2\nprompt3';
-      vi.mocked(fs.readFile).mockResolvedValue(content);
+  describe('parseQueueFile - @ directives (via reload)', () => {
+    it('should parse bare text as regular prompts', async () => {
+      vi.mocked(fs.readFile).mockResolvedValue('prompt1\nprompt2\nprompt3');
 
-      // When
       await queueManager.reload();
 
-      // Then
       const items = queueManager.getItems();
       expect(items).toHaveLength(3);
       expect(items.every((i) => !i.isNewSession)).toBe(true);
     });
 
-    it('should parse new session markers', async () => {
-      // Given
-      const content = 'prompt1\n>>> new session\nprompt3';
-      vi.mocked(fs.readFile).mockResolvedValue(content);
+    it('should parse @new as new session marker (standalone)', async () => {
+      vi.mocked(fs.readFile).mockResolvedValue('prompt1\n@new\nprompt2');
 
-      // When
       await queueManager.reload();
 
-      // Then
       const items = queueManager.getItems();
+      expect(items).toHaveLength(3);
       expect(items[1].isNewSession).toBe(true);
-      expect(items[1].prompt).toBe('new session');
+      expect(items[1].prompt).toBe('');
     });
 
-    it('should skip empty lines', async () => {
-      // Given
-      const content = 'prompt1\n\n\nprompt2';
-      vi.mocked(fs.readFile).mockResolvedValue(content);
+    it('should parse @pause as breakpoint', async () => {
+      vi.mocked(fs.readFile).mockResolvedValue('prompt1\n@pause check here\nprompt2');
 
-      // When
       await queueManager.reload();
 
-      // Then
+      const items = queueManager.getItems();
+      expect(items[1].isBreakpoint).toBe(true);
+      expect(items[1].prompt).toBe('check here');
+    });
+
+    it('should parse @pause without reason', async () => {
+      vi.mocked(fs.readFile).mockResolvedValue('@pause');
+
+      await queueManager.reload();
+
+      const items = queueManager.getItems();
+      expect(items[0].isBreakpoint).toBe(true);
+      expect(items[0].prompt).toBe('');
+    });
+
+    it('should parse @save as label session', async () => {
+      vi.mocked(fs.readFile).mockResolvedValue('@save checkpoint-v1');
+
+      await queueManager.reload();
+
+      expect(queueManager.getItems()[0].labelSession).toBe('checkpoint-v1');
+    });
+
+    it('should parse @load as load session (standalone)', async () => {
+      vi.mocked(fs.readFile).mockResolvedValue('@load checkpoint-v1');
+
+      await queueManager.reload();
+
+      const items = queueManager.getItems();
+      expect(items[0].isNewSession).toBe(true);
+      expect(items[0].loadSessionLabel).toBe('checkpoint-v1');
+      expect(items[0].prompt).toBe('');
+    });
+
+    it('should parse \\@ as escaped @ prompt', async () => {
+      vi.mocked(fs.readFile).mockResolvedValue('\\@username mentioned this');
+
+      await queueManager.reload();
+
+      const items = queueManager.getItems();
+      expect(items[0].prompt).toBe('@username mentioned this');
+      expect(items[0].isNewSession).toBe(false);
+    });
+
+    it('should parse \\\\@ as escaped \\@ prompt', async () => {
+      vi.mocked(fs.readFile).mockResolvedValue('\\\\@escaped');
+
+      await queueManager.reload();
+
+      const items = queueManager.getItems();
+      expect(items[0].prompt).toBe('\\@escaped');
+    });
+
+    it('should parse multiline blocks with @( ... @)', async () => {
+      vi.mocked(fs.readFile).mockResolvedValue('@(\nline1\nline2\n@)');
+
+      await queueManager.reload();
+
+      const items = queueManager.getItems();
+      expect(items).toHaveLength(1);
+      expect(items[0].isMultiline).toBe(true);
+      expect(items[0].prompt).toBe('line1\nline2');
+      expect(items[0].isNewSession).toBe(false);
+    });
+
+    it('should NOT parse @new( as multiline block (removed)', async () => {
+      vi.mocked(fs.readFile).mockResolvedValue('@new(\nline1\nline2\n@)');
+
+      await queueManager.reload();
+
+      // @new( is treated as unknown directive (bare prompt), lines are separate items
+      const items = queueManager.getItems();
+      expect(items[0].prompt).toBe('@new(');
+      expect(items[0].isMultiline).toBeFalsy();
+    });
+
+    it('should treat interactive-only @directives as bare prompts', async () => {
+      vi.mocked(fs.readFile).mockResolvedValue('@add something\n@drop');
+
+      await queueManager.reload();
+
+      const items = queueManager.getItems();
+      expect(items[0].prompt).toBe('@add something');
+      expect(items[0].isNewSession).toBe(false);
+      expect(items[1].prompt).toBe('@drop');
+    });
+
+    it('should treat unknown @directives as bare prompts', async () => {
+      vi.mocked(fs.readFile).mockResolvedValue('@unknown something');
+
+      await queueManager.reload();
+
+      const items = queueManager.getItems();
+      expect(items[0].prompt).toBe('@unknown something');
+    });
+
+    it('should skip empty lines and comments', async () => {
+      vi.mocked(fs.readFile).mockResolvedValue('prompt1\n\n# comment\n\nprompt2');
+
+      await queueManager.reload();
+
       expect(queueManager.getItems()).toHaveLength(2);
     });
 
     it('should trim whitespace from lines', async () => {
-      // Given
-      const content = '  prompt1  \n  prompt2  ';
-      vi.mocked(fs.readFile).mockResolvedValue(content);
+      vi.mocked(fs.readFile).mockResolvedValue('  prompt1  \n  prompt2  ');
 
-      // When
       await queueManager.reload();
 
-      // Then
       const items = queueManager.getItems();
       expect(items[0].prompt).toBe('prompt1');
       expect(items[1].prompt).toBe('prompt2');
     });
+
+    it('should handle unclosed multiline block', async () => {
+      vi.mocked(fs.readFile).mockResolvedValue('@(\nline1\nline2');
+
+      await queueManager.reload();
+
+      const items = queueManager.getItems();
+      expect(items).toHaveLength(1);
+      expect(items[0].isMultiline).toBe(true);
+      expect(items[0].prompt).toBe('line1\nline2');
+    });
+
+    it('should NOT parse : prefix in queue files (only @ directives)', async () => {
+      vi.mocked(fs.readFile).mockResolvedValue(':new something\n:bp check\n:save test');
+
+      await queueManager.reload();
+
+      const items = queueManager.getItems();
+      expect(items).toHaveLength(3);
+      expect(items[0].prompt).toBe(':new something');
+      expect(items[0].isNewSession).toBe(false);
+      expect(items[1].prompt).toBe(':bp check');
+      expect(items[2].prompt).toBe(':save test');
+    });
   });
 
-  describe('serializeQueue (via file write)', () => {
-    it('should serialize regular prompts', async () => {
-      // Given - mock readFile to return previously saved content
+  describe('serializeQueue - @ directives (via file write)', () => {
+    it('should serialize regular prompts as bare text', async () => {
       vi.mocked(fs.readFile)
-        .mockRejectedValueOnce({ code: 'ENOENT' }) // First addItem: no file
-        .mockResolvedValueOnce('prompt1'); // Second addItem: has prompt1
+        .mockRejectedValueOnce({ code: 'ENOENT' })
+        .mockResolvedValueOnce('prompt1');
       vi.mocked(fs.writeFile).mockResolvedValue(undefined);
       await queueManager.addItem('prompt1');
       await queueManager.addItem('prompt2');
 
-      // Then - verify writeFile was called with correct serialized content
       expect(vi.mocked(fs.writeFile)).toHaveBeenLastCalledWith(
         expect.any(String),
         'prompt1\nprompt2',
@@ -271,32 +338,159 @@ describe('QueueManager', () => {
       );
     });
 
-    it('should serialize new session markers with >>> prefix', async () => {
-      // Given - mock readFile to return previously saved content
+    it('should serialize new session markers with @new', async () => {
       vi.mocked(fs.readFile)
-        .mockRejectedValueOnce({ code: 'ENOENT' }) // First addItem: no file
-        .mockResolvedValueOnce('prompt1'); // Second addItem: has prompt1
+        .mockRejectedValueOnce({ code: 'ENOENT' })
+        .mockResolvedValueOnce('prompt1');
       vi.mocked(fs.writeFile).mockResolvedValue(undefined);
       await queueManager.addItem('prompt1');
-      await queueManager.addItem('new session', true);
+      await queueManager.addItem('', true);
 
-      // Then
       expect(vi.mocked(fs.writeFile)).toHaveBeenLastCalledWith(
         expect.any(String),
-        'prompt1\n>>> new session',
+        'prompt1\n@new',
+        expect.any(Object)
+      );
+    });
+
+    it('should serialize breakpoints with @pause', async () => {
+      vi.mocked(fs.readFile).mockRejectedValueOnce({ code: 'ENOENT' });
+      vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+      await queueManager.addItem('check here', { isBreakpoint: true });
+
+      expect(vi.mocked(fs.writeFile)).toHaveBeenLastCalledWith(
+        expect.any(String),
+        '@pause check here',
+        expect.any(Object)
+      );
+    });
+
+    it('should serialize save session with @save', async () => {
+      vi.mocked(fs.readFile).mockRejectedValueOnce({ code: 'ENOENT' });
+      vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+      await queueManager.addItem('', { labelSession: 'checkpoint-v1' });
+
+      expect(vi.mocked(fs.writeFile)).toHaveBeenLastCalledWith(
+        expect.any(String),
+        '@save checkpoint-v1',
+        expect.any(Object)
+      );
+    });
+
+    it('should serialize load session with @load', async () => {
+      vi.mocked(fs.readFile).mockRejectedValueOnce({ code: 'ENOENT' });
+      vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+      await queueManager.addItem('', { isNewSession: true, loadSessionLabel: 'cp1' });
+
+      expect(vi.mocked(fs.writeFile)).toHaveBeenLastCalledWith(
+        expect.any(String),
+        '@load cp1',
+        expect.any(Object)
+      );
+    });
+
+    it('should serialize model switch with @model', async () => {
+      vi.mocked(fs.readFile).mockRejectedValueOnce({ code: 'ENOENT' });
+      vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+      await queueManager.addItem('/model opus', { modelName: 'opus' });
+
+      expect(vi.mocked(fs.writeFile)).toHaveBeenLastCalledWith(
+        expect.any(String),
+        '@model opus',
+        expect.any(Object)
+      );
+    });
+
+    it('should ignore empty modelName option', async () => {
+      vi.mocked(fs.readFile).mockRejectedValueOnce({ code: 'ENOENT' });
+      vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+      await queueManager.addItem('/model', { modelName: '' });
+
+      expect(vi.mocked(fs.writeFile)).toHaveBeenLastCalledWith(
+        expect.any(String),
+        '/model',
+        expect.any(Object)
+      );
+    });
+
+    it('should serialize delay with @delay', async () => {
+      vi.mocked(fs.readFile).mockRejectedValueOnce({ code: 'ENOENT' });
+      vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+      await queueManager.addItem('', { delayMs: 5000 });
+
+      expect(vi.mocked(fs.writeFile)).toHaveBeenLastCalledWith(
+        expect.any(String),
+        '@delay 5000',
+        expect.any(Object)
+      );
+    });
+
+    it('should ignore zero/negative delayMs option', async () => {
+      vi.mocked(fs.readFile).mockRejectedValueOnce({ code: 'ENOENT' });
+      vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+      await queueManager.addItem('test', { delayMs: 0 });
+
+      expect(vi.mocked(fs.writeFile)).toHaveBeenLastCalledWith(
+        expect.any(String),
+        'test',
+        expect.any(Object)
+      );
+    });
+
+    it('should serialize multiline prompts with @( ... @)', async () => {
+      vi.mocked(fs.readFile).mockRejectedValueOnce({ code: 'ENOENT' });
+      vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+      await queueManager.addItem('line1\nline2', { isMultiline: true });
+
+      expect(vi.mocked(fs.writeFile)).toHaveBeenLastCalledWith(
+        expect.any(String),
+        '@(\nline1\nline2\n@)',
+        expect.any(Object)
+      );
+    });
+
+    it('should serialize new session + multiline as @new then @( block', async () => {
+      vi.mocked(fs.readFile).mockRejectedValueOnce({ code: 'ENOENT' });
+      vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+      await queueManager.addItem('line1\nline2', { isNewSession: true, isMultiline: true });
+
+      expect(vi.mocked(fs.writeFile)).toHaveBeenLastCalledWith(
+        expect.any(String),
+        '@new\n@(\nline1\nline2\n@)',
+        expect.any(Object)
+      );
+    });
+
+    it('should escape prompts starting with @', async () => {
+      vi.mocked(fs.readFile).mockRejectedValueOnce({ code: 'ENOENT' });
+      vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+      await queueManager.addItem('@username mentioned this');
+
+      expect(vi.mocked(fs.writeFile)).toHaveBeenLastCalledWith(
+        expect.any(String),
+        '\\@username mentioned this',
+        expect.any(Object)
+      );
+    });
+
+    it('should escape prompts starting with \\@', async () => {
+      vi.mocked(fs.readFile).mockRejectedValueOnce({ code: 'ENOENT' });
+      vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+      await queueManager.addItem('\\@escaped');
+
+      expect(vi.mocked(fs.writeFile)).toHaveBeenLastCalledWith(
+        expect.any(String),
+        '\\\\@escaped',
         expect.any(Object)
       );
     });
 
     it('should write file with mode 0o600', async () => {
-      // Given
       vi.mocked(fs.readFile).mockRejectedValue({ code: 'ENOENT' });
       vi.mocked(fs.writeFile).mockResolvedValue(undefined);
 
-      // When
       await queueManager.addItem('prompt1');
 
-      // Then
       expect(vi.mocked(fs.writeFile)).toHaveBeenCalledWith(
         expect.any(String),
         expect.any(String),
@@ -307,16 +501,13 @@ describe('QueueManager', () => {
 
   describe('events', () => {
     it('should emit item_added event when item is added', async () => {
-      // Given
       vi.mocked(fs.readFile).mockRejectedValue({ code: 'ENOENT' });
       vi.mocked(fs.writeFile).mockResolvedValue(undefined);
       const eventHandler = vi.fn();
       queueManager.on('item_added', eventHandler);
 
-      // When
       await queueManager.addItem('test prompt');
 
-      // Then
       expect(eventHandler).toHaveBeenCalledWith(
         expect.objectContaining({
           type: 'item_added',
@@ -327,17 +518,14 @@ describe('QueueManager', () => {
     });
 
     it('should emit item_removed event when item is removed', async () => {
-      // Given
       vi.mocked(fs.readFile).mockResolvedValue('prompt1');
       vi.mocked(fs.writeFile).mockResolvedValue(undefined);
       await queueManager.reload();
       const eventHandler = vi.fn();
       queueManager.on('item_removed', eventHandler);
 
-      // When
       await queueManager.removeLastItem();
 
-      // Then
       expect(eventHandler).toHaveBeenCalledWith(
         expect.objectContaining({
           type: 'item_removed',
@@ -348,17 +536,14 @@ describe('QueueManager', () => {
     });
 
     it('should emit item_executed event when item is popped', async () => {
-      // Given
       vi.mocked(fs.readFile).mockResolvedValue('prompt1\nprompt2');
       vi.mocked(fs.writeFile).mockResolvedValue(undefined);
       await queueManager.reload();
       const eventHandler = vi.fn();
       queueManager.on('item_executed', eventHandler);
 
-      // When
       await queueManager.popNextItem();
 
-      // Then
       expect(eventHandler).toHaveBeenCalledWith(
         expect.objectContaining({
           type: 'item_executed',
@@ -369,15 +554,12 @@ describe('QueueManager', () => {
     });
 
     it('should emit queue_reloaded event when queue is reloaded', async () => {
-      // Given
       vi.mocked(fs.readFile).mockResolvedValue('prompt1\nprompt2');
       const eventHandler = vi.fn();
       queueManager.on('queue_reloaded', eventHandler);
 
-      // When
       await queueManager.reload();
 
-      // Then
       expect(eventHandler).toHaveBeenCalledWith(
         expect.objectContaining({
           type: 'queue_reloaded',
@@ -388,16 +570,13 @@ describe('QueueManager', () => {
     });
 
     it('should include item in event payload when available', async () => {
-      // Given
       vi.mocked(fs.readFile).mockRejectedValue({ code: 'ENOENT' });
       vi.mocked(fs.writeFile).mockResolvedValue(undefined);
       const eventHandler = vi.fn();
       queueManager.on('item_added', eventHandler);
 
-      // When
       await queueManager.addItem('test prompt', true);
 
-      // Then
       expect(eventHandler).toHaveBeenCalledWith(
         expect.objectContaining({
           item: expect.objectContaining({
@@ -411,118 +590,91 @@ describe('QueueManager', () => {
 
   describe('error handling', () => {
     it('should emit file_read_error event on persistent file read failure', async () => {
-      // Given - use real timers for this test
       vi.useRealTimers();
       vi.mocked(fs.readFile).mockRejectedValue(new Error('Permission denied'));
       const errorHandler = vi.fn();
       queueManager.on('file_read_error', errorHandler);
 
-      // When
       await queueManager.reload();
 
-      // Then - should emit event instead of throwing
       expect(errorHandler).toHaveBeenCalledTimes(1);
     }, 10000);
 
     it('should emit file_write_error event on persistent file write failure', async () => {
-      // Given - use real timers for this test
       vi.useRealTimers();
       vi.mocked(fs.readFile).mockRejectedValue({ code: 'ENOENT' });
       vi.mocked(fs.writeFile).mockRejectedValue(new Error('Disk full'));
       const errorHandler = vi.fn();
       queueManager.on('file_write_error', errorHandler);
 
-      // When
       await queueManager.addItem('test');
 
-      // Then - should emit event instead of throwing
       expect(errorHandler).toHaveBeenCalledTimes(1);
     }, 10000);
 
     it('should retry file read 2 times with 100ms delay', async () => {
-      // Given - use real timers for retry tests
       vi.useRealTimers();
       vi.mocked(fs.readFile).mockRejectedValue(new Error('Temporary failure'));
 
-      // When
       await queueManager.reload();
 
-      // Then
-      expect(vi.mocked(fs.readFile)).toHaveBeenCalledTimes(3); // Initial + 2 retries
-    }, 10000); // Increase timeout for retry delays
+      expect(vi.mocked(fs.readFile)).toHaveBeenCalledTimes(3);
+    }, 10000);
 
     it('should retry file write 2 times with 100ms delay', async () => {
-      // Given - use real timers for retry tests
       vi.useRealTimers();
       vi.mocked(fs.readFile).mockRejectedValue({ code: 'ENOENT' });
       vi.mocked(fs.writeFile).mockRejectedValue(new Error('Temporary failure'));
 
-      // When
       await queueManager.addItem('test');
 
-      // Then
-      // 1 call from ENOENT empty file creation (silently ignored) + 3 calls from saveToFile (initial + 2 retries)
       expect(vi.mocked(fs.writeFile)).toHaveBeenCalledTimes(4);
-    }, 10000); // Increase timeout for retry delays
+    }, 10000);
 
     it('should initialize empty queue when file does not exist (ENOENT)', async () => {
-      // Given
       vi.mocked(fs.readFile).mockRejectedValue({ code: 'ENOENT' });
 
-      // When
       await queueManager.reload();
 
-      // Then
       expect(queueManager.getItems()).toHaveLength(0);
     });
 
     it('should emit file_recovered event when file becomes accessible again', async () => {
-      // Given - use real timers
       vi.useRealTimers();
       const recoveredHandler = vi.fn();
       queueManager.on('file_recovered', recoveredHandler);
 
-      // First call fails (sets error state)
       vi.mocked(fs.readFile).mockRejectedValue(new Error('Permission denied'));
       await queueManager.reload();
 
-      // Then file becomes accessible
       vi.mocked(fs.readFile).mockResolvedValue('prompt1');
 
-      // When
       await queueManager.reload();
 
-      // Then
       expect(recoveredHandler).toHaveBeenCalledTimes(1);
     }, 10000);
 
     it('should only emit file_read_error once for consecutive failures', async () => {
-      // Given - use real timers
       vi.useRealTimers();
       vi.mocked(fs.readFile).mockRejectedValue(new Error('Permission denied'));
       const errorHandler = vi.fn();
       queueManager.on('file_read_error', errorHandler);
 
-      // When - multiple reload attempts
       await queueManager.reload();
       await queueManager.reload();
       await queueManager.reload();
 
-      // Then - should only emit once
       expect(errorHandler).toHaveBeenCalledTimes(1);
     }, 10000);
 
     it('should continue with in-memory queue on file read failure', async () => {
-      // Given - use real timers
       vi.useRealTimers();
       vi.mocked(fs.readFile).mockRejectedValue(new Error('Permission denied'));
       vi.mocked(fs.writeFile).mockResolvedValue(undefined);
 
-      // When - reload fails but addItem should still work
       await queueManager.reload();
       await queueManager.addItem('test prompt');
 
-      // Then - item should be in memory
       expect(queueManager.getItems()).toHaveLength(1);
       expect(queueManager.getItems()[0].prompt).toBe('test prompt');
     }, 10000);
@@ -530,33 +682,26 @@ describe('QueueManager', () => {
 
   describe('getLength', () => {
     it('should return correct queue length', async () => {
-      // Given
       vi.mocked(fs.readFile).mockResolvedValue('prompt1\nprompt2\nprompt3');
       await queueManager.reload();
 
-      // Then
       expect(queueManager.getLength()).toBe(3);
     });
 
     it('should return 0 for empty queue', async () => {
-      // Given
       vi.mocked(fs.readFile).mockRejectedValue({ code: 'ENOENT' });
       await queueManager.reload();
 
-      // Then
       expect(queueManager.getLength()).toBe(0);
     });
   });
 
   describe('reload', () => {
     it('should return fileFound: true and correct itemCount when file exists', async () => {
-      // Given
       vi.mocked(fs.readFile).mockResolvedValue('prompt1\nprompt2\nprompt3');
 
-      // When
       const result = await queueManager.reload();
 
-      // Then
       expect(result.fileFound).toBe(true);
       expect(result.itemCount).toBe(3);
       expect(result.skippedLines).toBe(0);
@@ -564,13 +709,10 @@ describe('QueueManager', () => {
     });
 
     it('should return fileFound: false when file does not exist', async () => {
-      // Given
       vi.mocked(fs.readFile).mockRejectedValue({ code: 'ENOENT' });
 
-      // When
       const result = await queueManager.reload();
 
-      // Then
       expect(result.fileFound).toBe(false);
       expect(result.itemCount).toBe(0);
       expect(result.skippedLines).toBe(0);
@@ -578,27 +720,21 @@ describe('QueueManager', () => {
     });
 
     it('should count skipped invalid lines (empty and whitespace-only)', async () => {
-      // Given
       vi.mocked(fs.readFile).mockResolvedValue('prompt1\n\nprompt2\n  \nprompt3');
 
-      // When
       const result = await queueManager.reload();
 
-      // Then
       expect(result.itemCount).toBe(3);
-      expect(result.skippedLines).toBe(2); // 1 empty line + 1 whitespace-only line
+      expect(result.skippedLines).toBe(2);
     });
 
     it('should emit queue_reloaded event after reload', async () => {
-      // Given
       vi.mocked(fs.readFile).mockResolvedValue('prompt1');
       const eventSpy = vi.fn();
       queueManager.on('queue_reloaded', eventSpy);
 
-      // When
       await queueManager.reload();
 
-      // Then
       expect(eventSpy).toHaveBeenCalledTimes(1);
       expect(eventSpy).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -611,35 +747,26 @@ describe('QueueManager', () => {
 
   describe('getItems immutability', () => {
     it('should return a new array instance (not internal reference)', async () => {
-      // Given
       vi.mocked(fs.readFile).mockResolvedValue('prompt1\nprompt2');
       await queueManager.reload();
 
-      // When
       const items1 = queueManager.getItems();
       const items2 = queueManager.getItems();
 
-      // Then
       expect(items1).not.toBe(items2);
       expect(items1).toEqual(items2);
     });
 
     it('should not affect internal queue when returned array is modified', async () => {
-      // Given
       vi.mocked(fs.readFile).mockResolvedValue('prompt1\nprompt2');
       await queueManager.reload();
       const items = queueManager.getItems();
 
-      // When - modify the returned array
       items.push({ prompt: 'injected', isNewSession: false });
       items[0].prompt = 'modified';
 
-      // Then - internal queue should be unchanged in length
       expect(queueManager.getLength()).toBe(2);
-      const freshItems = queueManager.getItems();
-      expect(freshItems).toHaveLength(2);
-      // Note: shallow copy means internal objects are still references
-      // This documents the current behavior
+      expect(queueManager.getItems()).toHaveLength(2);
     });
   });
 });

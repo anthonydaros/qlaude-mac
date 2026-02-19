@@ -3,12 +3,10 @@ import * as fs from 'node:fs/promises';
 import { logger } from './utils/logger.js';
 import type { QueueItem, QueueEvent, QueueManagerEvents, ReloadResult, AddItemOptions } from './types/queue.js';
 
-// Queue file prefixes
-const NEW_SESSION_PREFIX = '>>> ';
-const BREAKPOINT_PREFIX = '>>#';
-const LABEL_PATTERN = /^>>\{Label:([^}]+)\}$/i;
-const LOAD_PATTERN = /^>>\{Load:([^}]+)\}$/i;
-const NEW_SESSION_LOAD_PATTERN = /^>>>\{Load:([^}]+)\}(.*)$/i;  // Shorthand: >>> + >>{Load:name} + optional prompt
+// Known queue file directives (@ prefix)
+const KNOWN_QUEUE_DIRECTIVES = ['new', 'save', 'load', 'pause', 'model', 'delay'];
+// Interactive-only commands that should NOT appear in queue files
+const INTERACTIVE_ONLY_DIRECTIVES = ['add', 'drop', 'clear', 'resume', 'reload', 'status', 'help', 'list'];
 
 const RETRY_COUNT = 2;
 const RETRY_DELAY_MS = 100;
@@ -30,8 +28,9 @@ interface TypedEventEmitter<T> {
 
 /**
  * QueueManager handles reading and writing queue files
- * Each line in the queue file represents a single prompt
- * Lines prefixed with '>>> ' are new session markers
+ * Each line in the queue file represents a single prompt (bare text)
+ * Lines prefixed with '@' are directives (@new, @save, @load, @pause, etc.)
+ * Lines starting with '\@' are escaped (literal @ in prompt)
  */
 export class QueueManager extends (EventEmitter as new () => EventEmitter & TypedEventEmitter<QueueManagerEvents>) {
   private items: QueueItem[] = [];
@@ -159,125 +158,139 @@ export class QueueManager extends (EventEmitter as new () => EventEmitter & Type
 
   /**
    * Parse queue file content into QueueItem array
-   * Also tracks invalid lines (empty or whitespace-only)
-   * Supports multiline blocks: >>( ... >>) and >>>( ... >>)
+   * Format (@ prefix for directives, bare text for prompts):
+   *   bare text             → regular prompt
+   *   # comment             → skipped
+   *   @new                  → new session (next line is the prompt)
+   *   @save name            → label session
+   *   @load name            → load session
+   *   @pause [reason]       → breakpoint (pause auto-execution)
+   *   @(  ... @)            → multiline prompt
+   *   \@text                → escaped: prompt "@text"
+   *   \\@text               → escaped: prompt "\@text"
    */
   private parseQueueFile(content: string): { items: QueueItem[]; skippedLines: number } {
-    const lines = content.split('\n');
+    const lines = content.replace(/\r\n/g, '\n').split('\n');
     const items: QueueItem[] = [];
     let skippedLines = 0;
 
     // Multiline block state
     let inMultilineBlock = false;
-    let multilineIsNewSession = false;
     let multilineLines: string[] = [];
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       const trimmedLine = line.trim();
 
-      // Check for multiline block end: >>) or >>>)
+      // Check for multiline block end: @)
       if (inMultilineBlock) {
-        if (trimmedLine === '>>)' || trimmedLine === '>>>)') {
-          // End of multiline block
+        if (trimmedLine === '@)') {
           const prompt = multilineLines.join('\n');
           items.push({
             prompt,
-            isNewSession: multilineIsNewSession,
+            isNewSession: false,
             isMultiline: true,
           });
           inMultilineBlock = false;
           multilineLines = [];
           continue;
         }
-        // Inside multiline block - preserve original line (not trimmed)
+        // Inside multiline block - preserve original line (not trimmed), no directive parsing
         multilineLines.push(line);
         continue;
       }
 
-      // Check for multiline block start: >>>( or >>(
-      if (trimmedLine === '>>>(' || trimmedLine === '>>(') {
+      // Check for multiline block start: @(
+      if (trimmedLine === '@(') {
         inMultilineBlock = true;
-        multilineIsNewSession = trimmedLine === '>>>(';
         multilineLines = [];
         continue;
       }
 
+      // Skip empty lines and comments
       if (!trimmedLine || trimmedLine.startsWith('#')) {
         skippedLines++;
         continue;
       }
 
-      // Check for Label command: >>{Label:name}
-      const labelMatch = trimmedLine.match(LABEL_PATTERN);
-      if (labelMatch) {
-        items.push({
-          prompt: '',
-          isNewSession: false,
-          labelSession: labelMatch[1].trim(),
-        });
+      // Escape: \\@ → prompt "\@..."
+      if (trimmedLine.startsWith('\\\\@')) {
+        items.push({ prompt: trimmedLine.slice(1), isNewSession: false }); // Remove first backslash
         continue;
       }
 
-      // Check for New Session + Load shorthand: >>>{Load:name} or >>>{Load:name} prompt
-      const newSessionLoadMatch = trimmedLine.match(NEW_SESSION_LOAD_PATTERN);
-      if (newSessionLoadMatch) {
-        const label = newSessionLoadMatch[1].trim();
-        const prompt = newSessionLoadMatch[2]?.trim() || '';
-        items.push({
-          prompt,
-          isNewSession: true,
-          loadSessionLabel: label,  // Deferred lookup at execution time
-        });
+      // Escape: \@ → prompt "@..."
+      if (trimmedLine.startsWith('\\@')) {
+        items.push({ prompt: trimmedLine.slice(1), isNewSession: false }); // Remove backslash
         continue;
       }
 
-      // Check for Load command: >>{Load:name}
-      const loadMatch = trimmedLine.match(LOAD_PATTERN);
-      if (loadMatch) {
-        const label = loadMatch[1].trim();
-        items.push({
-          prompt: '',
-          isNewSession: true,
-          loadSessionLabel: label,  // Deferred lookup at execution time
-        });
+      // @ directive lines
+      if (trimmedLine.startsWith('@')) {
+        const rest = trimmedLine.slice(1);
+        const spaceIdx = rest.indexOf(' ');
+        const dirName = (spaceIdx === -1 ? rest : rest.slice(0, spaceIdx)).toLowerCase();
+        const args = spaceIdx === -1 ? '' : rest.slice(spaceIdx + 1).trim();
+
+        // Interactive-only commands → warning + treat as bare prompt
+        if (INTERACTIVE_ONLY_DIRECTIVES.includes(dirName)) {
+          logger.warn({ directive: dirName, line: i + 1 }, 'Interactive-only command used as @directive in queue file, treating as prompt');
+          items.push({ prompt: trimmedLine, isNewSession: false });
+          continue;
+        }
+
+        // Known queue directives
+        if (KNOWN_QUEUE_DIRECTIVES.includes(dirName)) {
+          switch (dirName) {
+            case 'new':
+              items.push({ prompt: '', isNewSession: true });
+              continue;
+            case 'pause':
+              items.push({ prompt: args, isNewSession: false, isBreakpoint: true });
+              continue;
+            case 'save':
+              if (args) {
+                items.push({ prompt: '', isNewSession: false, labelSession: args });
+              }
+              continue;
+            case 'load': {
+              const label = args || '';
+              if (label) {
+                items.push({ prompt: '', isNewSession: true, loadSessionLabel: label });
+              }
+              continue;
+            }
+            case 'model':
+              if (args) {
+                items.push({ prompt: `/model ${args}`, isNewSession: false, modelName: args });
+              }
+              continue;
+            case 'delay': {
+              const ms = parseInt(args, 10);
+              if (ms > 0) {
+                items.push({ prompt: '', isNewSession: false, delayMs: ms });
+              }
+              continue;
+            }
+          }
+        }
+
+        // Unknown @directive → warning + treat as bare prompt
+        logger.warn({ directive: dirName, line: i + 1 }, 'Unknown @directive in queue file, treating as prompt');
+        items.push({ prompt: trimmedLine, isNewSession: false });
         continue;
       }
 
-      // Check for Breakpoint command: >>#
-      if (trimmedLine.startsWith(BREAKPOINT_PREFIX)) {
-        const comment = trimmedLine.slice(BREAKPOINT_PREFIX.length).trim();
-        items.push({
-          prompt: comment,
-          isNewSession: false,
-          isBreakpoint: true,
-        });
-        continue;
-      }
-
-      // Check for New Session command: >>> or >>> prompt
-      if (trimmedLine === '>>>' || trimmedLine.startsWith(NEW_SESSION_PREFIX)) {
-        const prompt = trimmedLine === '>>>' ? '' : trimmedLine.slice(NEW_SESSION_PREFIX.length);
-        items.push({
-          prompt,
-          isNewSession: true,
-        });
-        continue;
-      }
-
-      // Default: regular prompt
-      items.push({
-        prompt: trimmedLine,
-        isNewSession: false,
-      });
+      // Default: bare text → regular prompt
+      items.push({ prompt: trimmedLine, isNewSession: false });
     }
 
-    // Handle unclosed multiline block (treat remaining lines as content)
+    // Handle unclosed multiline block
     if (inMultilineBlock && multilineLines.length > 0) {
       logger.warn('Unclosed multiline block in queue file');
       items.push({
         prompt: multilineLines.join('\n'),
-        isNewSession: multilineIsNewSession,
+        isNewSession: false,
         isMultiline: true,
       });
     }
@@ -286,38 +299,51 @@ export class QueueManager extends (EventEmitter as new () => EventEmitter & Type
   }
 
   /**
-   * Serialize queue items to file format
+   * Serialize queue items to file format (@ directives)
    */
   private serializeQueue(): string {
     return this.items
       .map((item) => {
-        // Label session command
+        // Label/save session directive
         if (item.labelSession) {
-          return `>>{Label:${item.labelSession}}`;
+          return `@save ${item.labelSession}`;
         }
-        // Load session command (deferred lookup)
+        // Load session directive (deferred lookup)
         if (item.loadSessionLabel) {
-          const base = `>>>{Load:${item.loadSessionLabel}}`;
-          return item.prompt ? `${base} ${item.prompt}` : base;
+          return `@load ${item.loadSessionLabel}`;
         }
-        // Resume session command (already resolved session ID)
+        // Resume session (already resolved session ID)
         if (item.resumeSessionId) {
-          return `${NEW_SESSION_PREFIX}${item.prompt}`;
+          return '@new';
         }
-        // Breakpoint command
+        // Pause directive (breakpoint)
         if (item.isBreakpoint) {
-          return item.prompt ? `${BREAKPOINT_PREFIX} ${item.prompt}` : BREAKPOINT_PREFIX;
+          return item.prompt ? `@pause ${item.prompt}` : '@pause';
         }
-        // Multiline prompt
+        // Model switch directive
+        if (item.modelName) {
+          return `@model ${item.modelName}`;
+        }
+        // Delay directive
+        if (item.delayMs) {
+          return `@delay ${item.delayMs}`;
+        }
+        // Multiline prompt (if also new session, output @new before @( block)
         if (item.isMultiline) {
-          const prefix = item.isNewSession ? '>>>(' : '>>(';
-          return `${prefix}\n${item.prompt}\n>>)`;
+          const prefix = item.isNewSession ? '@new\n' : '';
+          return `${prefix}@(\n${item.prompt}\n@)`;
         }
-        // New session command
+        // New session directive
         if (item.isNewSession) {
-          return `${NEW_SESSION_PREFIX}${item.prompt}`;
+          return '@new';
         }
-        // Regular prompt
+        // Regular prompt - escape if starts with @
+        if (item.prompt.startsWith('\\@')) {
+          return `\\${item.prompt}`; // \@ → \\@
+        }
+        if (item.prompt.startsWith('@')) {
+          return `\\${item.prompt}`; // @ → \@
+        }
         return item.prompt;
       })
       .join('\n');
@@ -350,6 +376,8 @@ export class QueueManager extends (EventEmitter as new () => EventEmitter & Type
         ? { isNewSession: optionsOrIsNewSession }
         : optionsOrIsNewSession;
 
+      const modelName = options.modelName?.trim() || undefined;
+      const delayMs = options.delayMs && options.delayMs > 0 ? options.delayMs : undefined;
       const item: QueueItem = {
         prompt,
         isNewSession: options.isNewSession ?? false,
@@ -358,6 +386,8 @@ export class QueueManager extends (EventEmitter as new () => EventEmitter & Type
         resumeSessionId: options.resumeSessionId,
         loadSessionLabel: options.loadSessionLabel,
         isMultiline: options.isMultiline,
+        modelName,
+        delayMs,
         addedAt: new Date(),
       };
 
@@ -384,6 +414,8 @@ export class QueueManager extends (EventEmitter as new () => EventEmitter & Type
     return this.runExclusive(async () => {
       await this.loadFromFile();
 
+      const modelName = options.modelName?.trim() || undefined;
+      const delayMs = options.delayMs && options.delayMs > 0 ? options.delayMs : undefined;
       const item: QueueItem = {
         prompt,
         isNewSession: options.isNewSession ?? false,
@@ -392,6 +424,8 @@ export class QueueManager extends (EventEmitter as new () => EventEmitter & Type
         resumeSessionId: options.resumeSessionId,
         loadSessionLabel: options.loadSessionLabel,
         isMultiline: options.isMultiline,
+        modelName,
+        delayMs,
         addedAt: new Date(),
       };
 

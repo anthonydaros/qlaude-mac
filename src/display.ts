@@ -46,12 +46,22 @@ export class Display {
   private messageTimer: ReturnType<typeof setTimeout> | null = null;
   private lastItems: QueueItem[] = [];
   private isPaused: boolean = false;
+  private currentItem: QueueItem | null = null;
 
   /**
    * Set the paused state for display
    */
   setPaused(paused: boolean): void {
     this.isPaused = paused;
+  }
+
+  /**
+   * Set the currently executing queue item for persistent display
+   * Shown on status bar line 0 when no temporary message is active
+   */
+  setCurrentItem(item: QueueItem | null): void {
+    this.currentItem = item;
+    this.updateStatusBar(this.lastItems);
   }
 
   /**
@@ -180,7 +190,7 @@ export class Display {
       firstLine += ` ${COLORS.GREEN}[running]${COLORS.RESET}`;
     }
 
-    // Append message if present
+    // Append message if present (takes priority over current item)
     if (this.currentMessage) {
       const colors: Record<MessageType, string> = {
         info: COLORS.CYAN,
@@ -190,6 +200,21 @@ export class Display {
       };
       const color = colors[this.currentMessage.type] || COLORS.RESET;
       firstLine += ` ${color}${this.currentMessage.text}${COLORS.RESET}`;
+    } else if (this.currentItem) {
+      // Show currently executing item persistently when no temporary message
+      const logoWidth = LOGO_LINES[0].length + 3; // logo + " │ "
+      const firstLineLen = stripAnsi(firstLine).length;
+      const availableWidth = this.getTerminalWidth() - logoWidth - firstLineLen - 4; // 4 for " ▶ " + margin
+      if (availableWidth > 10) {
+        let prompt = this.currentItem.prompt || '';
+        if (prompt.includes('\n')) {
+          prompt = prompt.split('\n')[0];
+        }
+        if (prompt.length > availableWidth) {
+          prompt = prompt.substring(0, availableWidth - 3) + '...';
+        }
+        firstLine += ` ${COLORS.DIM}▶ ${prompt}${COLORS.RESET}`;
+      }
     }
     rightLines.push(firstLine);
 
@@ -231,18 +256,25 @@ export class Display {
     let tag = '';
     let tagLength = 0;
 
-    if (item.isBreakpoint) {
-      tag = `${COLORS.RED}[BP]${COLORS.RESET} `;
-      tagLength = 5; // "[BP] "
+    if (item.delayMs) {
+      tag = `${COLORS.CYAN}[DELAY:${item.delayMs}ms]${COLORS.RESET} `;
+      tagLength = 10 + String(item.delayMs).length; // "[DELAY:Nms] "
+    } else if (item.modelName !== undefined) {
+      const label = item.modelName || 'default';
+      tag = `${COLORS.MAGENTA}[MODEL:${label}]${COLORS.RESET} `;
+      tagLength = 9 + label.length; // "[MODEL:name] "
+    } else if (item.isBreakpoint) {
+      tag = `${COLORS.RED}[PAUSE]${COLORS.RESET} `;
+      tagLength = 8; // "[PAUSE] "
     } else if (item.labelSession) {
-      tag = `${COLORS.GREEN}[LABEL:${item.labelSession}]${COLORS.RESET} `;
-      tagLength = 9 + item.labelSession.length; // "[LABEL:name] "
+      tag = `${COLORS.GREEN}[SAVE:${item.labelSession}]${COLORS.RESET} `;
+      tagLength = 8 + item.labelSession.length; // "[SAVE:name] "
     } else if (item.loadSessionLabel) {
       tag = `${COLORS.MAGENTA}[LOAD:${item.loadSessionLabel}]${COLORS.RESET} `;
       tagLength = 8 + item.loadSessionLabel.length; // "[LOAD:name] "
     } else if (item.isNewSession) {
-      tag = `${COLORS.YELLOW}[NEW]${COLORS.RESET} `;
-      tagLength = 6; // "[NEW] "
+      tag = `${COLORS.YELLOW}[New Session]${COLORS.RESET} `;
+      tagLength = 14; // "[New Session] "
     }
 
     // Add multiline indicator (can combine with [NEW])
@@ -251,8 +283,8 @@ export class Display {
       tagLength += 5; // "[ML] "
     }
 
-    // Breakpoints and labels without prompts don't need "(no prompt)" display
-    if ((item.isBreakpoint || item.labelSession) && !item.prompt) {
+    // Items with self-descriptive tags don't need "(no prompt)" suffix
+    if (!item.prompt && (item.isBreakpoint || item.labelSession || item.loadSessionLabel || item.delayMs || item.modelName !== undefined || item.isNewSession)) {
       return `${COLORS.DIM}${prefix}${COLORS.RESET}${tag.trimEnd()}`;
     }
 

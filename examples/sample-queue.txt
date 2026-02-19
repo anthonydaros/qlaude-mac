@@ -1,84 +1,79 @@
 # qlaude Sample Queue File
-# Copy this to .qlaude-queue in your project root to test all features
+# Copy this to .qlaude/queue in your project root to test all features
 # Lines starting with # are comments (not processed)
 
 # ============================================
 # Basic Queue Items
 # ============================================
 
-# Simple prompt
+# Simple prompt (bare text = prompt)
 Say "Hello from qlaude queue!" and nothing else.
 
 # Another simple prompt
 What is 2 + 2? Answer with just the number.
 
 # ============================================
-# Breakpoints
+# Pause Points
 # ============================================
 
-# Breakpoint pauses auto-execution until you manually resume
+# @pause pauses auto-execution until you manually resume
 # Use :resume or Telegram /resume to continue
->># Checkpoint: Review the responses above before continuing
+@pause Checkpoint: Review the responses above before continuing
 
 # ============================================
 # New Session Markers
 # ============================================
 
 # Start a fresh Claude Code session (clears conversation history)
-# Can be used alone (>>>) or with a prompt (>>> prompt)
->>>
+# @new is standalone — put the prompt on the next line
+@new
 Say "Fresh session started!" to confirm.
-
-# Or combine with prompt on same line:
->>> This is another new session. Confirm by saying "New session started!"
 
 # ============================================
 # Multiline Prompts
 # ============================================
 
-# Multiline prompt using >>( and >>)
->>(
+# Multiline prompt using @( and @)
+@(
 Please create a simple function that:
 1. Takes a number as input
 2. Returns the square of that number
 3. Include a brief comment
 
 Just show the code, no explanation needed.
->>)
+@)
 
 # ============================================
-# Session Labels
+# Session Save/Load
 # ============================================
 
 # Save current session with a label (can be restored later)
->>{Label:test-checkpoint}
+@save test-checkpoint
 
-# Simple prompt after labeling
-Confirm the session was labeled by saying "Session labeled!"
+# Simple prompt after saving
+Confirm the session was saved by saying "Session saved!"
 
 # ============================================
 # Load Session (uncomment to test)
 # ============================================
 
 # Load a previously saved session
-# >>{Load:test-checkpoint}
-
-# Load session and start fresh conversation
-# >>>{Load:test-checkpoint} Continue from the checkpoint
+# @load test-checkpoint
 
 # ============================================
-# Multiline with New Session
+# New Session + Multiline (separate directives)
 # ============================================
 
-# Multiline prompt that also starts a new session
->>>(
+# New session marker followed by a multiline prompt
+@new
+@(
 This is a multiline prompt in a new session.
 Please confirm by listing:
 - "New session: yes"
 - "Multiline: yes"
->>)
+@)
 
-# ============================================
+# ================================= ===========
 # Selection Prompt Test
 # ============================================
 
@@ -87,7 +82,7 @@ Please confirm by listing:
 # You can respond via keyboard or Telegram inline buttons
 Write a file called "qlaude-test.txt" with the content "Hello from qlaude!"
 
->># After permission prompt - verify file was created or declined
+@pause After permission prompt - verify file was created or declined
 
 # ============================================
 # QUEUE_STOP Test (uncomment to test)
@@ -105,23 +100,52 @@ Write a file called "qlaude-test.txt" with the content "Hello from qlaude!"
 # Say the exact text "QUEUE_STOP" and nothing else.
 
 # ============================================
-# Final Breakpoint
+# Model Switching
 # ============================================
 
->># End of sample queue - all features tested!
+# @model sends /model command to Claude Code to switch models
+# @model <name> switches to specified model
+# @model (no args) is silently skipped
+@model sonnet
+Say "I am running on Sonnet!" and nothing else.
+
+# ============================================
+# Delay Between Items
+# ============================================
+
+# @delay <ms> pauses queue execution for the specified milliseconds
+# Useful for rate limit avoidance or pacing long queues
+@delay 3000
+Say "Waited 3 seconds before this prompt!" and nothing else.
+
+# ============================================
+# Escaping @ prefixed text
+# ============================================
+
+# Use \@ to escape prompts that start with @ (so they aren't parsed as directives)
+\@username mentioned this — this is a regular prompt, not a directive
+
+# ============================================
+# Final Pause Point
+# ============================================
+
+@pause End of sample queue - all features tested!
 
 # ============================================
 # Feature Checklist:
 # ============================================
-# [x] Simple prompts
-# [x] Breakpoints (>>#)
-# [x] New session (>>>)
-# [x] Multiline prompts (>>( ... >>))
-# [x] Session labels (>>{Label:name})
-# [x] Multiline + new session (>>>( ... >>))
+# [x] Simple prompts (bare text)
+# [x] Pause points (@pause)
+# [x] New session (@new)
+# [x] Multiline prompts (@( ... @))
+# [x] Session save (@save name)
+# [x] New session + multiline (@new then @( ... @))
+# [x] Model switching (@model name)
+# [x] Delay between items (@delay ms)
+# [x] Escape with \@
 # [x] Selection prompt (SELECTION_PROMPT state)
 #
 # Not included (require manual setup):
-# [ ] Load session (>>{Load:name}) - needs existing label
+# [ ] Load session (@load name) - needs existing label
 # [ ] QUEUE_STOP test - uncomment the test above
 # [ ] Telegram commands - needs bot configuration

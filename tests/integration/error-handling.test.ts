@@ -72,8 +72,9 @@ describe('Error Handling Integration', () => {
     stateDetector = new StateDetector();
     display = new Display();
 
-    // Mock display.showMessage for verification
+    // Mock display methods for verification
     vi.spyOn(display, 'showMessage').mockImplementation(() => {});
+    vi.spyOn(display, 'setCurrentItem').mockImplementation(() => {});
 
     autoExecutor = new AutoExecutor({
       stateDetector,

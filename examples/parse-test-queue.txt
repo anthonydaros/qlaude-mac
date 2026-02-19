@@ -1,0 +1,118 @@
+# ============================================
+# TEST 18: Empty multiline block
+# Expected: empty prompt (Claude gets nothing meaningful)
+# ============================================
+@(
+@)
+
+@pause Check: Claude should have received an essentially empty prompt
+
+# ============================================
+# TEST 19: @save and @load
+# Expected: session is saved, then after new session, loaded back
+# ============================================
+Remember the code word: PINEAPPLE. Say exactly: TEST-19-SAVED
+@save test-parse-verification
+
+@new
+Say exactly: TEST-19-FRESH (you should NOT know the code word)
+
+@load test-parse-verification
+What was the code word? Say exactly: TEST-19-LOADED followed by the code word
+
+@pause Check: TEST-19-SAVED, then TEST-19-FRESH, then TEST-19-LOADED PINEAPPLE
+
+# ============================================
+# TEST 20: Case-insensitive directives
+# Expected: @NEW and @PAUSE work the same as @new and @pause
+# ============================================
+@NEW
+Say exactly: TEST-20-CASE-INSENSITIVE
+@PAUSE Check: directive case insensitivity works
+
+# ============================================
+# TEST 21: @pause without reason
+# Expected: queue pauses, status bar shows no reason text
+# ============================================
+Say exactly: TEST-21-BEFORE-PAUSE
+@pause
+
+# ============================================
+# TEST 22: @new( is NOT a multiline block (v3 removed)
+# TRAP: @new( should be treated as an unknown bare prompt, not open a block
+# ============================================
+@new(
+
+@pause Check: Claude should have received "@new(" as literal text (not a multiline block)
+
+# ============================================
+# TEST 23: @model (model switch)
+# Expected: sends /model opus to Claude Code; @model (no args) is silently skipped
+# ============================================
+@model opus
+Say exactly: TEST-23-OPUS
+
+@pause Check: TEST-23-OPUS (model switched via /model opus). Note: @model without args is silently skipped
+
+# ============================================
+# TEST 24: @delay (timed pause)
+# Expected: queue waits 2000ms then continues automatically
+# ============================================
+Say exactly: TEST-24-BEFORE-DELAY
+@delay 2000
+Say exactly: TEST-24-AFTER-DELAY
+
+@pause Check: TEST-24-BEFORE-DELAY, ~2s gap, then TEST-24-AFTER-DELAY
+
+# ============================================
+# TEST 25: @delay with invalid values
+# Expected: invalid delays are silently skipped (not added to queue)
+# ============================================
+@delay 0
+@delay -100
+@delay abc
+Say exactly: TEST-25-INVALID-DELAYS-SKIPPED
+
+@pause Check: only TEST-25-INVALID-DELAYS-SKIPPED (invalid delays ignored)
+
+# ============================================
+# TEST 26: @MODEL case insensitivity
+# Expected: @MODEL SONNET works same as @model sonnet
+# ============================================
+@MODEL SONNET
+Say exactly: TEST-26-MODEL-CASE
+
+@pause Check: TEST-26-MODEL-CASE ran with sonnet model
+
+# ============================================
+# DONE
+# ============================================
+@pause ALL TESTS COMPLETE — review results above
+
+# Test Summary:
+# [1]  Basic prompt
+# [2]  Whitespace trimming
+# [3]  Comment/blank skipping
+# [4]  @pause with reason
+# [5]  @new (new session)
+# [6]  Multiline prompt
+# [7]  Multiline indentation/blank preservation
+# [8]  TRAP: directives inside multiline are literal
+# [9]  Escape \@
+# [10] TRAP: \@new is NOT a directive
+# [11] Double escape \\@
+# [12] Unknown @directive → bare prompt
+# [13] Interactive @directive → bare prompt
+# [14] : prefix → bare prompt
+# [15] @ in middle of text
+# [16] @new + @( multiline (separate)
+# [17] TRAP: @) with trailing text ≠ close
+# [18] Empty multiline block
+# [19] @save / @load roundtrip
+# [20] Case-insensitive directives
+# [21] @pause without reason
+# [22] TRAP: @new( is not special
+# [23] @model switch
+# [24] @delay timed pause
+# [25] @delay invalid values (skipped)
+# [26] @MODEL case insensitivity

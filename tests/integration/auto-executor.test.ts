@@ -47,6 +47,7 @@ describe('AutoExecutor Integration', () => {
     // Mock display methods
     vi.spyOn(display, 'showMessage').mockImplementation(() => {});
     vi.spyOn(display, 'updateStatusBar').mockImplementation(() => {});
+    vi.spyOn(display, 'setCurrentItem').mockImplementation(() => {});
 
     autoExecutor = new AutoExecutor({
       stateDetector,
@@ -136,19 +137,18 @@ describe('AutoExecutor Integration', () => {
     expect(queueManager.getLength()).toBe(0);
   });
 
-  it('should show notification before execution', async () => {
+  it('should show current item in display before execution', async () => {
     // Given
     await queueManager.addItem('notification test');
 
     // When
     // @ts-expect-error - accessing private method for testing
     stateDetector['transitionTo']('READY');
-    await vi.waitFor(() => expect(display.showMessage).toHaveBeenCalled());
+    await vi.waitFor(() => expect(display.setCurrentItem).toHaveBeenCalled());
 
     // Then
-    expect(display.showMessage).toHaveBeenCalledWith(
-      'info',
-      expect.stringContaining('[Queue] Executing:')
+    expect(display.setCurrentItem).toHaveBeenCalledWith(
+      expect.objectContaining({ prompt: 'notification test' })
     );
   });
 

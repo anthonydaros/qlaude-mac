@@ -26,13 +26,11 @@ describe('InputParser + QueueManager Integration', () => {
     vi.restoreAllMocks();
   });
 
-  describe('>> command flow', () => {
-    it('should add item to queue when >> command is parsed and executed', async () => {
-      // Given
-      const input = '>> test prompt for queue';
+  describe(':add command flow', () => {
+    it('should add item to queue when :add command is parsed and executed', async () => {
+      const input = ':add test prompt for queue';
       const parseResult = parse(input);
 
-      // When
       expect(parseResult.type).toBe('QUEUE_ADD');
       expect(parseResult.prompt).toBe('test prompt for queue');
 
@@ -40,7 +38,6 @@ describe('InputParser + QueueManager Integration', () => {
         await queueManager.addItem(parseResult.prompt);
       }
 
-      // Then
       expect(fs.writeFile).toHaveBeenCalledWith(
         TEST_QUEUE_FILE,
         'test prompt for queue',
@@ -48,16 +45,13 @@ describe('InputParser + QueueManager Integration', () => {
       );
     });
 
-    it('should not call queueManager when prompt is empty', async () => {
-      // Given
-      const input = '>> ';
+    it('should not call queueManager when :add has no prompt', async () => {
+      const input = ':add';
       const parseResult = parse(input);
 
-      // When
       expect(parseResult.type).toBe('QUEUE_ADD');
       expect(parseResult.prompt).toBeUndefined();
 
-      // Then - no addItem call should happen
       if (parseResult.prompt) {
         await queueManager.addItem(parseResult.prompt);
       }
@@ -65,139 +59,127 @@ describe('InputParser + QueueManager Integration', () => {
       expect(fs.writeFile).not.toHaveBeenCalled();
     });
 
-    it('should handle special characters in prompt', async () => {
-      // Given
-      const input = '>> prompt with $pecial ch@rs & symbols!';
+    it('should handle special characters in :add prompt', async () => {
+      const input = ':add prompt with $pecial ch@rs & symbols!';
       const parseResult = parse(input);
 
-      // When
       if (parseResult.prompt) {
         await queueManager.addItem(parseResult.prompt);
       }
 
-      // Then
       expect(fs.writeFile).toHaveBeenCalledWith(
         TEST_QUEUE_FILE,
         'prompt with $pecial ch@rs & symbols!',
         expect.any(Object)
       );
     });
-  });
 
-  describe('PASSTHROUGH command flow', () => {
-    it('should return PASSTHROUGH for regular input (no queue operation)', () => {
-      // Given
-      const input = 'regular command to Claude';
-
-      // When
+    it('should escape @ at start of prompt when saving to queue file', async () => {
+      const input = ':add @username mentioned this';
       const parseResult = parse(input);
 
-      // Then
-      expect(parseResult.type).toBe('PASSTHROUGH');
-      expect(parseResult.prompt).toBeUndefined();
-      expect(fs.writeFile).not.toHaveBeenCalled();
-    });
-
-    it('should return PASSTHROUGH for >> without space', () => {
-      // Given
-      const input = '>>noSpace';
-
-      // When
-      const parseResult = parse(input);
-
-      // Then
-      expect(parseResult.type).toBe('PASSTHROUGH');
-      expect(isQueueCommand(input)).toBe(false);
-    });
-  });
-
-  describe('isQueueCommand helper', () => {
-    it('should correctly identify queue commands before parsing', () => {
-      // These should be identified as queue commands
-      expect(isQueueCommand('>> test')).toBe(true);
-      expect(isQueueCommand('>> ')).toBe(true);
-
-      // These should not be identified as queue commands
-      expect(isQueueCommand('>>')).toBe(false);
-      expect(isQueueCommand('>>test')).toBe(false);
-      expect(isQueueCommand('regular text')).toBe(false);
-      expect(isQueueCommand('> single arrow')).toBe(false);
-    });
-  });
-
-  describe('Queue file persistence', () => {
-    it('should append to existing queue items', async () => {
-      // Given - existing queue with one item
-      vi.mocked(fs.readFile).mockResolvedValue('existing prompt');
-
-      const input = '>> new prompt';
-      const parseResult = parse(input);
-
-      // When
       if (parseResult.prompt) {
         await queueManager.addItem(parseResult.prompt);
       }
 
-      // Then
+      // @ prompts should be escaped with \@ in queue file
       expect(fs.writeFile).toHaveBeenCalledWith(
         TEST_QUEUE_FILE,
-        'existing prompt\nnew prompt',
+        '\\@username mentioned this',
         expect.any(Object)
       );
     });
   });
 
-  // QUEUE_NEW_SESSION tests (Story 2.4)
-  describe('>>> command flow', () => {
-    it('should add item with isNewSession: true when >>> command is parsed', async () => {
-      // Given
-      const input = '>>> new session prompt';
-      const parseResult = parse(input);
+  describe(':add @new command flow', () => {
+    it('should parse :add @new as QUEUE_ADD with @new prompt', () => {
+      const parseResult = parse(':add @new');
 
-      // When
-      expect(parseResult.type).toBe('QUEUE_NEW_SESSION');
-      if (parseResult.prompt) {
-        await queueManager.addItem(parseResult.prompt, true);
-      }
+      expect(parseResult.type).toBe('QUEUE_ADD');
+      expect(parseResult.prompt).toBe('@new');
+    });
 
-      // Then
+    it('should add new session marker to queue (via main.ts @new handling)', async () => {
+      // main.ts detects prompt starting with @new and calls addItem with isNewSession
+      await queueManager.addItem('', { isNewSession: true });
+
       expect(fs.writeFile).toHaveBeenCalledWith(
         TEST_QUEUE_FILE,
-        '>>> new session prompt',
+        '@new',
         expect.any(Object)
       );
     });
 
-    it('should serialize new session items with >>> prefix in queue file', async () => {
-      // Given - existing queue with regular item
+    it('should serialize @new in queue file when appended', async () => {
       vi.mocked(fs.readFile).mockResolvedValue('existing prompt');
 
-      // When
-      await queueManager.addItem('new session prompt', true);
+      await queueManager.addItem('', { isNewSession: true });
 
-      // Then
       expect(fs.writeFile).toHaveBeenCalledWith(
         TEST_QUEUE_FILE,
-        'existing prompt\n>>> new session prompt',
+        'existing prompt\n@new',
         expect.any(Object)
       );
     });
   });
 
-  // QUEUE_REMOVE tests (Story 2.3)
-  describe('<< command flow', () => {
-    it('should remove last item when << command is parsed', async () => {
-      // Given - queue with two items
+  describe(':add @pause command flow', () => {
+    it('should parse :add @pause as QUEUE_ADD', () => {
+      const parseResult = parse(':add @pause check here');
+
+      expect(parseResult.type).toBe('QUEUE_ADD');
+      expect(parseResult.prompt).toBe('@pause check here');
+    });
+
+    it('should add pause marker to queue (via main.ts @pause handling)', async () => {
+      await queueManager.addItem('check here', { isBreakpoint: true });
+
+      expect(fs.writeFile).toHaveBeenCalledWith(
+        TEST_QUEUE_FILE,
+        '@pause check here',
+        expect.any(Object)
+      );
+    });
+  });
+
+  describe(':add @save/@load command flow', () => {
+    it('should parse :add @save as QUEUE_ADD', () => {
+      const parseResult = parse(':add @save checkpoint');
+
+      expect(parseResult.type).toBe('QUEUE_ADD');
+      expect(parseResult.prompt).toBe('@save checkpoint');
+    });
+
+    it('should add save marker to queue', async () => {
+      await queueManager.addItem('', { labelSession: 'checkpoint' });
+
+      expect(fs.writeFile).toHaveBeenCalledWith(
+        TEST_QUEUE_FILE,
+        '@save checkpoint',
+        expect.any(Object)
+      );
+    });
+
+    it('should add load marker to queue', async () => {
+      await queueManager.addItem('', { isNewSession: true, loadSessionLabel: 'checkpoint' });
+
+      expect(fs.writeFile).toHaveBeenCalledWith(
+        TEST_QUEUE_FILE,
+        '@load checkpoint',
+        expect.any(Object)
+      );
+    });
+  });
+
+  describe(':drop command flow', () => {
+    it('should remove last item when :drop command is parsed', async () => {
       vi.mocked(fs.readFile).mockResolvedValue('first prompt\nsecond prompt');
 
-      const input = '<<';
-      const parseResult = parse(input);
+      const parseResult = parse(':drop');
 
-      // When
       expect(parseResult.type).toBe('QUEUE_REMOVE');
       const removed = await queueManager.removeLastItem();
 
-      // Then
       expect(removed?.prompt).toBe('second prompt');
       expect(fs.writeFile).toHaveBeenCalledWith(
         TEST_QUEUE_FILE,
@@ -207,79 +189,160 @@ describe('InputParser + QueueManager Integration', () => {
     });
 
     it('should return null when removing from empty queue', async () => {
-      // Given - empty queue (ENOENT)
       vi.mocked(fs.readFile).mockRejectedValue({ code: 'ENOENT' });
 
-      const input = '<<';
-      const parseResult = parse(input);
+      const parseResult = parse(':drop');
 
-      // When
       expect(parseResult.type).toBe('QUEUE_REMOVE');
       const removed = await queueManager.removeLastItem();
 
-      // Then
       expect(removed).toBeNull();
-    });
-
-    it('should parse << with trailing text as QUEUE_REMOVE', () => {
-      // Given
-      const input = '<<abc';
-
-      // When
-      const parseResult = parse(input);
-
-      // Then
-      expect(parseResult.type).toBe('QUEUE_REMOVE');
-      expect(isQueueCommand(input)).toBe(true);
     });
   });
 
-  // META_RELOAD tests (colon commands)
-  describe(':reload command flow', () => {
-    it('should reload queue when :reload command is parsed', async () => {
-      // Given
-      vi.mocked(fs.readFile).mockResolvedValue('prompt1\nprompt2');
-      const input = ':reload';
+  describe('PASSTHROUGH flow', () => {
+    it('should return PASSTHROUGH for regular input (no queue operation)', () => {
+      const input = 'regular command to Claude';
       const parseResult = parse(input);
 
-      // When
+      expect(parseResult.type).toBe('PASSTHROUGH');
+      expect(parseResult.prompt).toBeUndefined();
+      expect(fs.writeFile).not.toHaveBeenCalled();
+    });
+
+    it('should return PASSTHROUGH for > (shortcuts removed)', () => {
+      expect(parse('> test prompt').type).toBe('PASSTHROUGH');
+      expect(isQueueCommand('> test')).toBe(false);
+    });
+
+    it('should return PASSTHROUGH for >> (shortcuts removed)', () => {
+      expect(parse('>>').type).toBe('PASSTHROUGH');
+      expect(isQueueCommand('>>')).toBe(false);
+    });
+
+    it('should return PASSTHROUGH for < (shortcuts removed)', () => {
+      expect(parse('<').type).toBe('PASSTHROUGH');
+      expect(isQueueCommand('<')).toBe(false);
+    });
+
+    it('should return PASSTHROUGH for :bp (removed)', () => {
+      expect(parse(':bp').type).toBe('PASSTHROUGH');
+      expect(isQueueCommand(':bp')).toBe(false);
+    });
+  });
+
+  describe('isQueueCommand helper', () => {
+    it('should correctly identify : commands', () => {
+      // Known :commands
+      expect(isQueueCommand(':add test')).toBe(true);
+      expect(isQueueCommand(':drop')).toBe(true);
+      expect(isQueueCommand(':clear')).toBe(true);
+      expect(isQueueCommand(':save name')).toBe(true);
+      expect(isQueueCommand(':load name')).toBe(true);
+      expect(isQueueCommand(':pause')).toBe(true);
+      expect(isQueueCommand(':resume')).toBe(true);
+      expect(isQueueCommand(':reload')).toBe(true);
+      expect(isQueueCommand(':status')).toBe(true);
+      expect(isQueueCommand(':help')).toBe(true);
+      expect(isQueueCommand(':list')).toBe(true);
+    });
+
+    it('should return false for non-commands', () => {
+      expect(isQueueCommand('regular text')).toBe(false);
+      expect(isQueueCommand(':unknown')).toBe(false);
+      expect(isQueueCommand('> test')).toBe(false);
+      expect(isQueueCommand('>>')).toBe(false);
+      expect(isQueueCommand('<')).toBe(false);
+      expect(isQueueCommand(':bp')).toBe(false);
+      expect(isQueueCommand(':new')).toBe(false);
+      expect(isQueueCommand(':del')).toBe(false);
+      expect(isQueueCommand('')).toBe(false);
+    });
+  });
+
+  describe('Queue file persistence', () => {
+    it('should append to existing queue items', async () => {
+      vi.mocked(fs.readFile).mockResolvedValue('existing prompt');
+
+      const input = ':add new prompt';
+      const parseResult = parse(input);
+
+      if (parseResult.prompt) {
+        await queueManager.addItem(parseResult.prompt);
+      }
+
+      expect(fs.writeFile).toHaveBeenCalledWith(
+        TEST_QUEUE_FILE,
+        'existing prompt\nnew prompt',
+        expect.any(Object)
+      );
+    });
+  });
+
+  describe(':reload command flow', () => {
+    it('should reload queue when :reload command is parsed', async () => {
+      vi.mocked(fs.readFile).mockResolvedValue('prompt1\nprompt2');
+      const parseResult = parse(':reload');
+
       expect(parseResult.type).toBe('META_RELOAD');
       const reloadResult = await queueManager.reload();
 
-      // Then
       expect(reloadResult.fileFound).toBe(true);
       expect(reloadResult.itemCount).toBe(2);
       expect(queueManager.getItems()).toHaveLength(2);
     });
 
     it('should handle file not found when :reload command is parsed', async () => {
-      // Given
       vi.mocked(fs.readFile).mockRejectedValue({ code: 'ENOENT' });
-      const input = ':reload';
-      const parseResult = parse(input);
+      const parseResult = parse(':reload');
 
-      // When
       expect(parseResult.type).toBe('META_RELOAD');
       const reloadResult = await queueManager.reload();
 
-      // Then
       expect(reloadResult.fileFound).toBe(false);
       expect(reloadResult.itemCount).toBe(0);
     });
 
-    it('should report skipped invalid lines when file has empty lines', async () => {
-      // Given
-      vi.mocked(fs.readFile).mockResolvedValue('prompt1\n\n\nprompt2');
-      const input = ':reload';
-      const parseResult = parse(input);
-
-      // When
-      expect(parseResult.type).toBe('META_RELOAD');
+    it('should report skipped lines (empty/comments) when reloading', async () => {
+      vi.mocked(fs.readFile).mockResolvedValue('prompt1\n\n# comment\nprompt2');
       const reloadResult = await queueManager.reload();
 
-      // Then
       expect(reloadResult.itemCount).toBe(2);
-      expect(reloadResult.skippedLines).toBe(2); // 2 empty lines
+      expect(reloadResult.skippedLines).toBe(2); // 1 empty + 1 comment
+    });
+  });
+
+  describe('Queue file with @ directives', () => {
+    it('should parse @new from queue file correctly', async () => {
+      vi.mocked(fs.readFile).mockResolvedValue('prompt1\n@new\nprompt2');
+      await queueManager.reload();
+
+      const items = queueManager.getItems();
+      expect(items).toHaveLength(3);
+      expect(items[0].prompt).toBe('prompt1');
+      expect(items[0].isNewSession).toBe(false);
+      expect(items[1].prompt).toBe('');
+      expect(items[1].isNewSession).toBe(true);
+      expect(items[2].prompt).toBe('prompt2');
+    });
+
+    it('should parse @pause from queue file correctly', async () => {
+      vi.mocked(fs.readFile).mockResolvedValue('prompt1\n@pause check results');
+      await queueManager.reload();
+
+      const items = queueManager.getItems();
+      expect(items).toHaveLength(2);
+      expect(items[1].isBreakpoint).toBe(true);
+      expect(items[1].prompt).toBe('check results');
+    });
+
+    it('should parse \\@ escape from queue file correctly', async () => {
+      vi.mocked(fs.readFile).mockResolvedValue('\\@username mentioned this');
+      await queueManager.reload();
+
+      const items = queueManager.getItems();
+      expect(items).toHaveLength(1);
+      expect(items[0].prompt).toBe('@username mentioned this');
     });
   });
 });

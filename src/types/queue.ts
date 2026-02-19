@@ -9,6 +9,8 @@ export interface QueueItem {
   resumeSessionId?: string;    // Resume this session ID (with --resume)
   loadSessionLabel?: string;   // Label to resolve at execution time (deferred lookup)
   isMultiline?: boolean;       // Prompt contains newlines (parsed from >>( ... >>) block)
+  modelName?: string;          // Model switch: non-empty model name (e.g. 'opus')
+  delayMs?: number;            // Delay execution by this many milliseconds
   addedAt?: Date;
 }
 
@@ -22,6 +24,8 @@ export interface AddItemOptions {
   resumeSessionId?: string;
   loadSessionLabel?: string;
   isMultiline?: boolean;
+  modelName?: string;
+  delayMs?: number;
 }
 
 /**

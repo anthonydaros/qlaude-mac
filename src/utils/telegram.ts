@@ -1020,34 +1020,27 @@ export class TelegramNotifier extends EventEmitter {
 
   /**
    * Build template variables for a notification message.
-   * Returns pre-formatted strings ready for MarkdownV2.
+   * All values are raw data with MarkdownV2 escaping only (no decorative emojis/formatting).
+   * Type-specific variables: breakpoint→{reason}, task_failed→{error}, pty_crashed→{recovery}.
    */
   private buildTemplateVars(
     type: NotificationType,
     details?: { queueLength?: number; message?: string; options?: ParsedOption[]; context?: string }
-  ): { emoji: string; title: string; vars: Record<string, string> } {
-    const emojiMap: Record<NotificationType, string> = {
-      selection_prompt: '⚠️',
-      interrupted: '🛑',
-      breakpoint: '⏸️',
-      queue_started: '▶️',
-      queue_completed: '✅',
-      task_failed: '❌',
-      pty_crashed: '💥',
-    };
-    const emoji = emojiMap[type];
+  ): Record<string, string> {
     const title = t(`notify.${type}`, this.lang);
 
-    // Build context code block
+    // Build context code block (selection_prompt only)
     let contextBlock = '';
     if (details?.context) {
       const cleanCtx = this.cleanContext(details.context);
       if (cleanCtx) {
-        contextBlock = `\`\`\`\n${cleanCtx}\n\`\`\``;
+        // Double backslashes: MarkdownV2 treats \ as escape even inside code blocks
+        const escaped = cleanCtx.replace(/\\/g, '\\\\');
+        contextBlock = `\`\`\`\n${escaped}\n\`\`\``;
       }
     }
 
-    // Build options list
+    // Build options list (selection_prompt only)
     let optionsBlock = '';
     if (details?.options && details.options.length > 0) {
       optionsBlock = details.options
@@ -1060,21 +1053,35 @@ export class TelegramNotifier extends EventEmitter {
     }
 
     const vars: Record<string, string> = {
-      header: `🤖 *[qlaude]*`,
-      emoji,
-      title: `*${title}*`,
-      hostInfo: `🖥️ ${this.escapeMarkdown(this.hostname)} \\(${this.escapeMarkdown(this.ipAddress)}\\)`,
-      instanceInfo: `🆔 \`${this.instanceId}\``,
-      project: `📁 ${this.escapeMarkdown(this.projectName)}`,
-      queue: details?.queueLength !== undefined
-        ? t('queue.items', this.lang, { count: details.queueLength })
-        : '',
-      message: details?.message ? `💬 ${this.escapeMarkdown(details.message)}` : '',
+      // Common raw data variables
+      title: this.escapeMarkdown(title),
+      hostname: this.escapeMarkdown(this.hostname),
+      ip: this.escapeMarkdown(this.ipAddress),
+      instanceId: this.escapeMarkdown(this.instanceId),
+      project: this.escapeMarkdown(this.projectName),
+      queueLength: details?.queueLength !== undefined ? String(details.queueLength) : '',
+
+      // Type-specific raw data variables (only the relevant one is populated)
+      reason: '',
+      error: '',
+      recovery: '',
+
+      // Structural variables (pre-formatted)
       context: contextBlock,
       options: optionsBlock,
     };
 
-    return { emoji, title, vars };
+    // Populate the type-specific variable
+    const msg = details?.message ? this.escapeMarkdown(details.message) : '';
+    if (type === 'breakpoint') {
+      vars.reason = msg;
+    } else if (type === 'task_failed') {
+      vars.error = msg;
+    } else if (type === 'pty_crashed') {
+      vars.recovery = msg;
+    }
+
+    return vars;
   }
 
   /**
@@ -1085,7 +1092,7 @@ export class TelegramNotifier extends EventEmitter {
     type: NotificationType,
     details?: { queueLength?: number; message?: string; options?: ParsedOption[]; context?: string }
   ): string {
-    const { emoji, title, vars } = this.buildTemplateVars(type, details);
+    const vars = this.buildTemplateVars(type, details);
 
     // Use user template if available (type-specific or default fallback)
     const template = this.templates[type] ?? this.templates['default'];
@@ -1093,31 +1100,66 @@ export class TelegramNotifier extends EventEmitter {
       return this.renderTemplate(template, vars);
     }
 
-    // Default hardcoded layout (backward compatible)
-    const lines = [
-      `${vars.header} ${emoji} *${title}*`,
-      '',
-      vars.hostInfo,
-      vars.instanceInfo,
-      vars.project,
-    ];
+    // Selection prompt: compact layout with screen buffer only (options visible in buffer,
+    // interactive selection via inline keyboard buttons)
+    if (type === 'selection_prompt') {
+      const lines = [
+        `⚠️ *${vars.title}*  📁 ${vars.project}`,
+      ];
 
-    if (vars.queue) {
-      lines.push(vars.queue);
+      if (vars.context) {
+        lines.push('', vars.context);
+      }
+
+      // Compact footer
+      const footerParts = [`🆔 \`${vars.instanceId}\``];
+      if (vars.queueLength) {
+        const items = t('queue.items', this.lang, { count: vars.queueLength });
+        footerParts.push(`📋 ${items}`);
+      }
+      lines.push('', footerParts.join(' · '));
+
+      return lines.join('\n');
     }
 
-    if (vars.message) {
-      lines.push(vars.message);
+    // Default layout for other notification types
+    const emojiMap: Record<NotificationType, string> = {
+      selection_prompt: '⚠️',
+      interrupted: '🛑',
+      breakpoint: '⏸️',
+      queue_started: '▶️',
+      queue_completed: '✅',
+      task_failed: '❌',
+      pty_crashed: '💥',
+    };
+    const emoji = emojiMap[type];
+
+    const lines = [
+      `🤖 *[qlaude]* ${emoji} *${vars.title}*`,
+      '',
+      `🖥️ ${vars.hostname} \\(${vars.ip}\\)`,
+      `🆔 \`${vars.instanceId}\``,
+      `📁 ${vars.project}`,
+    ];
+
+    if (vars.queueLength) {
+      const label = t('queue.label', this.lang);
+      const items = t('queue.items', this.lang, { count: vars.queueLength });
+      lines.push(`📋 ${label}: ${items}`);
+    }
+
+    // Type-specific message (only one will be non-empty)
+    const typeMsg = vars.reason || vars.error || vars.recovery;
+    if (typeMsg) {
+      lines.push(`💬 ${typeMsg}`);
     }
 
     if (vars.context) {
-      lines.push('');
-      lines.push(vars.context);
+      lines.push('', vars.context);
     }
 
     if (vars.options) {
-      lines.push('');
-      lines.push(vars.options);
+      lines.push('', vars.options);
     }
 
     return lines.join('\n');
@@ -1138,22 +1180,23 @@ export class TelegramNotifier extends EventEmitter {
       /^\s*\(\d+\/\d+\)\s*$/,  // Pagination like (1/3)
     ];
 
-    // Remove ANSI escape codes and filter lines
+    // Remove ANSI escape codes, keep indentation and backslashes
     const cleaned = context
       .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '')  // ANSI escape sequences
       .replace(/\r/g, '')  // Carriage returns
       .split('\n')
-      .map(line => line.trim())
+      .map(line => line.trimEnd())  // Keep leading whitespace (indentation)
       .filter(line => {
         if (line.length === 0) return false;
-        // Filter out UI chrome lines
-        return !filterPatterns.some(pattern => pattern.test(line));
+        // Filter out UI chrome lines (test against trimmed for pattern matching)
+        const trimmed = line.trim();
+        return !filterPatterns.some(pattern => pattern.test(trimmed));
       })
       .join('\n')
       .trim();
 
     // Limit length to prevent huge messages
-    const maxLength = 400;
+    const maxLength = 500;
     if (cleaned.length > maxLength) {
       return cleaned.slice(0, maxLength) + '...';
     }

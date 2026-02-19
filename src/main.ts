@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 
 import path, { isAbsolute } from 'path';
-import { existsSync, writeFileSync, unlinkSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, unlinkSync } from 'fs';
 import { tmpdir, hostname as osHostname } from 'os';
 import { execSync } from 'child_process';
 import { PtyWrapper } from './pty-wrapper.js';
 import { logger, reconfigureLogger } from './utils/logger.js';
-import { collectClaudeArgs } from './utils/cli-args.js';
+import { parseArgs } from './utils/cli-args.js';
 import { createCleanup } from './utils/cleanup.js';
 import { debounce } from './utils/debounce.js';
 import { TerminalEmulator } from './utils/terminal-emulator.js';
@@ -15,20 +15,55 @@ import { QueueManager } from './queue-manager.js';
 import { Display } from './display.js';
 import { StateDetector } from './state-detector.js';
 import { AutoExecutor } from './auto-executor.js';
-import { loadConfig, ensureConfigDir, QLAUDE_DIR } from './utils/config.js';
+import { loadConfig, ensureConfigDir, isFirstRun, QLAUDE_DIR } from './utils/config.js';
 import { ConversationLogger } from './utils/conversation-logger.js';
 import { TelegramNotifier } from './utils/telegram.js';
 import { t, setMessageOverrides } from './utils/telegram-messages.js';
+import { BatchReporter } from './utils/batch-report.js';
 import { getSessionFilePath, extractConversations, formatConversationsForLog } from './utils/session-log-extractor.js';
+import { saveSessionLabel, getSessionLabel } from './utils/session-labels.js';
 import type { ReloadResult } from './types/queue.js';
 import { ErrorCode, getUserFriendlyMessage } from './types/errors.js';
 import { compilePatterns } from './utils/pattern-compiler.js';
 
-// Ensure .qlaude directory exists in CWD (for first-run discoverability)
-ensureConfigDir();
+// Parse qlaude-specific CLI arguments before anything else
+const qlaudeArgs = parseArgs();
+
+// Run setup wizard on first run, then create config files
+if (isFirstRun() && process.stdin.isTTY) {
+  const { runSetupWizard, updateTelegramConfig } = await import('./utils/setup-wizard.js');
+  const wizardResult = await runSetupWizard();
+  if (wizardResult) {
+    // Wizard completed — create config files and apply wizard choices
+    ensureConfigDir();
+    const telegramFields: Record<string, unknown> = { language: wizardResult.language };
+    if (wizardResult.telegram) {
+      telegramFields.enabled = wizardResult.telegram.enabled;
+      telegramFields.botToken = wizardResult.telegram.botToken;
+      if (wizardResult.telegram.chatId) {
+        telegramFields.chatId = wizardResult.telegram.chatId;
+      }
+    }
+    updateTelegramConfig(telegramFields);
+  } else {
+    // Wizard cancelled — exit without creating config, re-runs next time
+    process.exit(0);
+  }
+} else {
+  ensureConfigDir();
+}
 
 // Load configuration
 const config = loadConfig();
+
+// Override startPaused if --run flag is set or queue file is provided
+if (qlaudeArgs.run || qlaudeArgs.queueFile) {
+  config.startPaused = false;
+}
+
+// Batch mode: auto-exit on queue completion with report
+const batchMode = !!qlaudeArgs.run;
+const batchReporter = batchMode ? new BatchReporter(qlaudeArgs.queueFile) : null;
 
 // Resolve log file paths relative to .qlaude/ directory
 const qlaudeDir = path.join(process.cwd(), QLAUDE_DIR);
@@ -85,6 +120,9 @@ let multilineIsNewSession = false;
 
 // Direct input buffer for reliable command detection
 let inputBuffer = '';
+
+// Help screen mode — any keypress clears and returns to normal
+let inHelpMode = false;
 
 // Queue input mode state
 let inQueueInputMode = false;
@@ -167,7 +205,26 @@ function needsWindowsWorkaround(): boolean {
 const STATUS_BAR_HEIGHT = 5;
 
 async function main(): Promise<void> {
-  claudeArgs = collectClaudeArgs();
+  claudeArgs = qlaudeArgs.claudeArgs;
+
+  // Copy queue file if --queue or positional file arg was provided
+  if (qlaudeArgs.queueFile) {
+    const queueFilePath = path.join(QLAUDE_DIR, 'queue');
+    try {
+      const sourcePath = path.resolve(qlaudeArgs.queueFile);
+      const content = readFileSync(sourcePath, 'utf-8');
+      writeFileSync(queueFilePath, content, { mode: 0o600 });
+      logger.info({ source: sourcePath, dest: queueFilePath }, 'Queue file copied from CLI argument');
+    } catch (err) {
+      const error = err as NodeJS.ErrnoException;
+      if (error.code === 'ENOENT') {
+        process.stderr.write(`Error: Queue file not found: ${qlaudeArgs.queueFile}\n`);
+      } else {
+        process.stderr.write(`Error: Cannot read queue file: ${qlaudeArgs.queueFile} (${error.message})\n`);
+      }
+      process.exit(1);
+    }
+  }
 
   setupTerminal();
 
@@ -264,18 +321,43 @@ async function main(): Promise<void> {
   // Subscribe to AutoExecutor events for conversation logging
   autoExecutor.on('queue_started', () => {
     queueExecutionStarted = true;
+    batchReporter?.start();
     conversationLogger.logQueueStarted();
   });
 
-  autoExecutor.on('queue_completed', () => {
+  autoExecutor.on('queue_completed', async () => {
     queueExecutionStarted = false;
     conversationLogger.logQueueCompleted();
+    if (batchReporter) {
+      batchReporter.writeReport('completed');
+      // Wait for pending Telegram notification to be sent before exiting
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      cleanup();
+      process.exit(0);
+    }
+  });
+
+  autoExecutor.on('executed', () => {
+    batchReporter?.recordItemExecuted();
+    // Clear inputBuffer: auto-executed prompt replaces any user-typed partial input
+    inputBuffer = '';
+  });
+
+  autoExecutor.on('task_failed', async (reason) => {
+    if (batchReporter) {
+      batchReporter.writeReport('failed', reason);
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      cleanup();
+      process.exit(1);
+    }
   });
 
   autoExecutor.on('session_restart', (item) => {
     conversationLogger.logNewSessionStarting(item);
     terminalEmulator.clear();  // Clear old session content
     stateDetector.reset();  // Reset state detector for new session
+    inputBuffer = '';  // Clear stale input from previous session
+    windowsWorkaroundApplied = false;  // Re-apply Enter+resize for new PTY
   });
 
   // Start Telegram polling for bidirectional communication
@@ -292,6 +374,7 @@ async function main(): Promise<void> {
     const selectMatch = cmd.match(/^select(\d+)$/);
     if (selectMatch) {
       const num = selectMatch[1];
+      inputBuffer = '';  // Clear stale user input
       ptyWrapper.write(num);
       display.showMessage('info', `[Telegram] Option ${num} selected`);
       return;
@@ -300,6 +383,7 @@ async function main(): Promise<void> {
     switch (cmd) {
       case 'escape':
         // Send Escape to cancel selection
+        inputBuffer = '';  // Clear stale user input
         ptyWrapper.write('\x1b');
         display.showMessage('info', '[Telegram] Selection cancelled');
         break;
@@ -342,7 +426,7 @@ async function main(): Promise<void> {
       t('status.pty', lang, { status: ptyStatus }),
       t('status.state', lang, { state: state.type }),
       t('status.autoexec', lang, { status: autoStatus }),
-      t('queue.items_short', lang, { count: queueLength }),
+      `${t('queue.label', lang)}: ${t('queue.items', lang, { count: queueLength })}`,
     ];
 
     telegramNotifier.replyToChat(chatId, messageId, lines.join('\n'));
@@ -452,6 +536,7 @@ async function main(): Promise<void> {
   // Handle text input from Telegram (option number + text)
   telegramNotifier.on('text_input', (optionNumber, text) => {
     logger.info({ optionNumber, text }, 'Telegram text_input received');
+    inputBuffer = '';  // Clear stale user input
     // First send the option number to select it
     ptyWrapper.write(String(optionNumber));
     // Wait for text input mode, then send text as separate block, then Enter as separate block
@@ -468,6 +553,7 @@ async function main(): Promise<void> {
   // Handle direct text send from Telegram (/send command or notification reply)
   telegramNotifier.on('send_text', (text) => {
     logger.info({ text }, 'Telegram send_text received');
+    inputBuffer = '';  // Clear stale user input
     // Send text first, then Enter as separate block (for multiline input mode)
     ptyWrapper.write(text);
     setTimeout(() => {
@@ -479,6 +565,7 @@ async function main(): Promise<void> {
   // Handle key input from Telegram (/key command - without Enter)
   telegramNotifier.on('key_input', (text) => {
     logger.info({ text }, 'Telegram key_input received');
+    inputBuffer = '';  // Clear stale user input
     // Send text only, no Enter
     ptyWrapper.write(text);
     display.showMessage('info', `[Telegram] ⌨️ "${text.slice(0, 20)}${text.length > 20 ? '...' : ''}" 입력됨`);
@@ -564,7 +651,20 @@ async function main(): Promise<void> {
       logger.warn({ exitCode, sessionId }, 'PTY crashed during queue execution, attempting recovery');
       display.showMessage('warning', '[Queue] Claude Code crashed. Recovering...');
 
-      await autoExecutor.handlePtyCrashRecovery();
+      const shouldRestart = await autoExecutor.handlePtyCrashRecovery();
+
+      if (!shouldRestart) {
+        // Max crash recoveries exceeded - restart PTY without queue execution
+        try {
+          ptyWrapper.spawn(claudeArgs);
+          logger.info('PTY restarted in idle mode after max crash recoveries');
+        } catch (error) {
+          logger.error({ error }, 'Failed to restart PTY after max crash recoveries');
+          cleanup();
+          process.exit(1);
+        }
+        return;
+      }
 
       telegramNotifier.notify('pty_crashed', {
         queueLength: queueManager.getLength(),
@@ -587,6 +687,11 @@ async function main(): Promise<void> {
       return;
     }
 
+    if (batchReporter && exitCode !== 0) {
+      batchReporter.writeReport('failed', `PTY exited with code ${exitCode}`);
+      cleanup();
+      process.exit(1);
+    }
     if (exitCode !== 0) {
       display.showMessage('error', getUserFriendlyMessage(ErrorCode.PTY_UNEXPECTED_EXIT));
     }
@@ -604,9 +709,72 @@ async function main(): Promise<void> {
       case 'QUEUE_ADD':
         if (result.prompt) {
           try {
-            await queueManager.addItem(result.prompt);
-            const truncated = truncatePrompt(result.prompt);
-            display.showMessage('success', `[Queue +1] Added: "${truncated}"`);
+            // Check for @ directive in prompt
+            if (result.prompt.startsWith('\\@')) {
+              // Escaped @ — literal @ prompt
+              const unescaped = result.prompt.slice(1);
+              await queueManager.addItem(unescaped);
+              display.showMessage('success', `[Queue +1] Added: "${truncatePrompt(unescaped)}"`);
+            } else if (result.prompt.startsWith('@')) {
+              // Parse @ directive
+              const rest = result.prompt.slice(1);
+              const spaceIdx = rest.indexOf(' ');
+              const directive = (spaceIdx === -1 ? rest : rest.slice(0, spaceIdx)).toLowerCase();
+              const dArgs = spaceIdx === -1 ? '' : rest.slice(spaceIdx + 1).trim();
+
+              switch (directive) {
+                case 'new':
+                  await queueManager.addItem('', { isNewSession: true });
+                  display.showMessage('success', '[Queue +1] New session marker added');
+                  break;
+                case 'pause':
+                  await queueManager.addItem(dArgs, { isBreakpoint: true });
+                  display.showMessage('success', `[Queue +1] Pause: "${dArgs || '(no reason)'}"`);
+                  break;
+                case 'save':
+                  if (!dArgs) {
+                    display.showMessage('error', '[Queue] Usage: :add @save name');
+                    break;
+                  }
+                  await queueManager.addItem('', { labelSession: dArgs });
+                  display.showMessage('success', `[Queue +1] Save: "${dArgs}"`);
+                  break;
+                case 'load':
+                  if (!dArgs) {
+                    display.showMessage('error', '[Queue] Usage: :add @load name');
+                    break;
+                  }
+                  await queueManager.addItem('', { loadSessionLabel: dArgs });
+                  display.showMessage('success', `[Queue +1] Load: "${dArgs}"`);
+                  break;
+                case 'model':
+                  if (!dArgs) {
+                    display.showMessage('error', '[Queue] Usage: :add @model name');
+                    break;
+                  }
+                  await queueManager.addItem(`/model ${dArgs}`, { modelName: dArgs });
+                  display.showMessage('success', `[Queue +1] Model: ${dArgs}`);
+                  break;
+                case 'delay': {
+                  const ms = parseInt(dArgs, 10);
+                  if (!ms || ms <= 0) {
+                    display.showMessage('error', '[Queue] Usage: :add @delay <ms>');
+                    break;
+                  }
+                  await queueManager.addItem('', { delayMs: ms });
+                  display.showMessage('success', `[Queue +1] Delay: ${ms}ms`);
+                  break;
+                }
+                default:
+                  // Unknown @ directive — add as regular prompt
+                  await queueManager.addItem(result.prompt);
+                  display.showMessage('success', `[Queue +1] Added: "${truncatePrompt(result.prompt)}"`);
+              }
+            } else {
+              // Regular prompt
+              await queueManager.addItem(result.prompt);
+              display.showMessage('success', `[Queue +1] Added: "${truncatePrompt(result.prompt)}"`);
+            }
           } catch (err) {
             logger.error({ err }, 'Failed to add item to queue');
             display.showMessage('error', '[Queue] Error: Failed to add item');
@@ -629,57 +797,52 @@ async function main(): Promise<void> {
           display.showMessage('error', '[Queue] Error: Failed to remove item');
         }
         break;
-      case 'QUEUE_NEW_SESSION':
-        if (result.prompt) {
-          try {
-            await queueManager.addItem(result.prompt, { isNewSession: true });
-            const truncated = truncatePrompt(result.prompt);
-            display.showMessage('success', `[Queue +1] Added (new session): "${truncated}"`);
-          } catch (err) {
-            logger.error({ err }, 'Failed to add new session item to queue');
-            display.showMessage('error', '[Queue] Error: Failed to add item');
+      case 'QUEUE_SAVE_SESSION':
+        // Immediate execution: save current session ID with label
+        if (result.label) {
+          conversationLogger.refreshSessionId();
+          const sessionId = conversationLogger.getCurrentSessionId();
+          if (sessionId) {
+            try {
+              const wasOverwritten = saveSessionLabel(result.label, sessionId);
+              if (wasOverwritten) {
+                display.showMessage('warning', `[Session] Label "${result.label}" overwritten`);
+              }
+              display.showMessage('success', `[Session] Saved: "${result.label}"`);
+              logger.info({ label: result.label, sessionId, wasOverwritten }, 'Session saved immediately');
+            } catch (err) {
+              logger.error({ err }, 'Failed to save session label');
+              display.showMessage('error', '[Session] Error: Failed to save');
+            }
+          } else {
+            display.showMessage('error', '[Session] Error: No active session');
           }
         } else {
-          display.showMessage('error', '[Queue] Error: Empty prompt');
-        }
-        break;
-      case 'QUEUE_BREAKPOINT':
-        try {
-          await queueManager.addItem(result.prompt || '', { isBreakpoint: true });
-          if (result.prompt) {
-            display.showMessage('success', `[Queue +1] Breakpoint: "${truncatePrompt(result.prompt)}"`);
-          } else {
-            display.showMessage('success', '[Queue +1] Breakpoint added');
-          }
-        } catch (err) {
-          logger.error({ err }, 'Failed to add breakpoint to queue');
-          display.showMessage('error', '[Queue] Error: Failed to add breakpoint');
-        }
-        break;
-      case 'QUEUE_LABEL_SESSION':
-        if (result.label) {
-          try {
-            await queueManager.addItem('', { labelSession: result.label });
-            display.showMessage('success', `[Queue +1] Label point: "${result.label}"`);
-          } catch (err) {
-            logger.error({ err }, 'Failed to add label to queue');
-            display.showMessage('error', '[Queue] Error: Failed to add label');
-          }
+          display.showMessage('error', '[Session] Error: No label specified');
         }
         break;
       case 'QUEUE_LOAD_SESSION':
+        // Immediate execution: load saved session by restarting PTY with --resume
         if (result.label) {
-          try {
-            // Deferred lookup: session ID will be resolved at execution time
-            await queueManager.addItem(result.prompt || '', { isNewSession: true, loadSessionLabel: result.label });
-            const msg = result.prompt
-              ? `[Queue +1] Load session: "${result.label}" + "${truncatePrompt(result.prompt)}"`
-              : `[Queue +1] Load session: "${result.label}"`;
-            display.showMessage('success', msg);
-          } catch (err) {
-            logger.error({ err }, 'Failed to add load session to queue');
-            display.showMessage('error', '[Queue] Error: Failed to add load session');
+          const sessionId = getSessionLabel(result.label);
+          if (sessionId) {
+            display.showMessage('info', `[Session] Loading: "${result.label}"...`);
+            logger.info({ label: result.label, sessionId }, 'Loading session immediately');
+            try {
+              const args = ['--resume', sessionId, ...claudeArgs];
+              await ptyWrapper.restart(args);
+              terminalEmulator.clear();
+              stateDetector.reset();
+              display.showMessage('success', `[Session] Loaded: "${result.label}"`);
+            } catch (err) {
+              logger.error({ err }, 'Failed to load session');
+              display.showMessage('error', '[Session] Error: Failed to load session');
+            }
+          } else {
+            display.showMessage('error', `[Session] Error: Label "${result.label}" not found`);
           }
+        } else {
+          display.showMessage('error', '[Session] Error: No label specified');
         }
         break;
       case 'META_RELOAD':
@@ -729,6 +892,84 @@ async function main(): Promise<void> {
           stateDetector.forceReady();
         }
         break;
+      case 'META_MODEL':
+        if (result.label) {
+          display.showMessage('info', `[Session] Switching model: ${result.label}`);
+          ptyWrapper.write(`/model ${result.label}`);
+          await new Promise((resolve) => setTimeout(resolve, 50));
+          ptyWrapper.write('\r');
+        } else {
+          display.showMessage('error', '[Queue] Usage: :model name');
+        }
+        break;
+      case 'META_HELP':
+        {
+          const helpLines = [
+            'Commands (: prefix, all immediate):',
+            '  :add text         Add prompt to queue',
+            '  :add @directive   Add @new, @pause, @save, @load, @model, @delay',
+            '  :drop             Remove last item',
+            '  :clear            Clear entire queue',
+            '  :save name        Save current session',
+            '  :load name        Load saved session',
+            '  :model name       Switch model (sends /model)',
+            '  :pause            Pause auto-execution',
+            '  :resume           Resume auto-execution',
+            '  :reload           Reload queue file',
+            '  :status           Toggle status bar',
+            '  :list             Show queue contents',
+            '  :help             Show this help',
+            'Multiline:',
+            '  :(  ... :)        Multiline prompt',
+            'Queue file (@ prefix):',
+            '  @new, @save, @load, @pause, @model, @delay',
+            '  @( ... @)         Multiline prompt',
+          ];
+          // Show help in PTY area — press any key to dismiss
+          process.stdout.write('\n' + helpLines.join('\n') + '\n\n(Press any key to return)\n');
+          inHelpMode = true;
+        }
+        break;
+      case 'META_LIST':
+        {
+          const items = queueManager.getItems();
+          if (items.length === 0) {
+            display.showMessage('info', '[Queue] Empty');
+          } else {
+            const listLines = items.map((item, i) => {
+              let tag = '';
+              if (item.delayMs) tag = `[DELAY:${item.delayMs}ms] `;
+              else if (item.modelName) tag = `[MODEL:${item.modelName}] `;
+              else if (item.isBreakpoint) tag = '[PAUSE] ';
+              else if (item.labelSession) tag = `[SAVE:${item.labelSession}] `;
+              else if (item.loadSessionLabel) tag = `[LOAD:${item.loadSessionLabel}] `;
+              else if (item.isNewSession) tag = '[New Session] ';
+              if (item.isMultiline) tag = `[ML] ${tag}`;
+              const prompt = item.prompt
+                ? (item.prompt.length > 60 ? item.prompt.slice(0, 60) + '...' : item.prompt)
+                : '';
+              return `  ${i + 1}. ${tag}${prompt}`;
+            });
+            process.stdout.write(`\n[Queue: ${items.length} items]\n${listLines.join('\n')}\n`);
+            display.showMessage('info', `[Queue] ${items.length} items`);
+          }
+        }
+        break;
+      case 'QUEUE_CLEAR':
+        {
+          const items = queueManager.getItems();
+          if (items.length === 0) {
+            display.showMessage('info', '[Queue] Already empty');
+          } else {
+            const count = items.length;
+            // Remove all items by popping each
+            for (let i = 0; i < count; i++) {
+              await queueManager.removeLastItem();
+            }
+            display.showMessage('success', `[Queue] Cleared ${count} items`);
+          }
+        }
+        break;
       case 'PASSTHROUGH':
       default:
         // Send buffered content + Enter to PTY
@@ -740,6 +981,20 @@ async function main(): Promise<void> {
   process.stdin.on('data', async (data: Buffer) => {
     const input = data.toString();
 
+    // Help mode — any keypress clears screen and returns to normal
+    if (inHelpMode) {
+      inHelpMode = false;
+      // Clear screen and re-render
+      const cols = process.stdout.columns || 80;
+      const rows = process.stdout.rows || 30;
+      process.stdout.write('\x1b[2J\x1b[H');  // Clear screen + cursor home
+      display.updateStatusBar(queueManager.getItems());
+      process.stdout.write(`\x1b[${STATUS_BAR_HEIGHT + 1};${rows}r`);  // Restore scroll region
+      process.stdout.write(`\x1b[${STATUS_BAR_HEIGHT + 1};1H`);        // Cursor below status bar
+      ptyWrapper.resize(cols, rows);  // Force Claude Code to redraw
+      return;
+    }
+
     // Multiline mode handling
     if (inMultilineMode) {
       if (input === '\r' || input === '\n') {
@@ -747,7 +1002,7 @@ async function main(): Promise<void> {
         const currentLine = inputBuffer.trim();
         inputBuffer = '';
 
-        if (currentLine === '>>)' || currentLine === '>>>)') {
+        if (currentLine === ':)') {
           // End multiline mode
           const prompt = multilineBuffer.join('\n');
           try {
@@ -811,7 +1066,7 @@ async function main(): Promise<void> {
       process.stdout.write(`\x1b7\x1b[${rows};1H\x1b[2K\x1b8`);
     };
 
-    // Queue input mode handling (triggered by : or > at empty prompt)
+    // Queue input mode handling (triggered by : at empty prompt)
     if (inQueueInputMode) {
       if (input === '\r' || input === '\n') {
         // Enter - process command and exit mode
@@ -853,8 +1108,8 @@ async function main(): Promise<void> {
       return;
     }
 
-    // Check for queue mode trigger (: or > at empty input)
-    if (inputBuffer === '' && (input === ':' || input === '>')) {
+    // Check for queue mode trigger (: at empty input)
+    if (inputBuffer === '' && input === ':') {
       inQueueInputMode = true;
       queueInputBuffer = input;
       // Clear PTY line and show queue prompt at bottom
@@ -872,33 +1127,26 @@ async function main(): Promise<void> {
       logger.debug({ currentLine }, 'Enter pressed, checking line from inputBuffer');
 
       // Check for multiline start commands
-      if (currentLine === '>>(') {
+      if (currentLine === ':(') {
         inMultilineMode = true;
         multilineIsNewSession = false;
         multilineBuffer = [];
-        display.showMessage('info', '[Queue] Multiline mode (end with >>) or >>>))');
+        display.showMessage('info', '[Queue] Multiline mode (end with :))');
         ptyWrapper.write('\x15');
         process.stdout.write('\r\x1b[2K[ML 0] ');
         terminalEmulator.clear();
         return;
       }
-      if (currentLine === '>>>(') {
-        inMultilineMode = true;
-        multilineIsNewSession = true;
-        multilineBuffer = [];
-        display.showMessage('info', '[Queue] Multiline mode - new session (end with >>) or >>>))');
-        ptyWrapper.write('\x15');
-        process.stdout.write('\r\x1b[2K[ML 0] ');
-        terminalEmulator.clear();
-        return;
-      }
-
       // Normal input - send Enter to PTY
       // (Queue commands are now handled in queue input mode)
       ptyWrapper.write('\r');
     } else if (input === '\x7f' || input === '\b') {
       // Backspace - update buffer and pass to PTY
       inputBuffer = inputBuffer.slice(0, -1);
+      ptyWrapper.write(input);
+    } else if (input === '\x03') {
+      // Ctrl+C - clear buffer and pass to PTY
+      inputBuffer = '';
       ptyWrapper.write(input);
     } else if (input === '\x15') {
       // Ctrl+U - clear buffer and pass to PTY

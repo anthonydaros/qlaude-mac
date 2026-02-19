@@ -46,12 +46,14 @@ export interface AutoExecutorDependencies {
 export class AutoExecutor extends EventEmitter {
   private static readonly MAX_RESTART_RETRIES = 1;
   private static readonly RESTART_RETRY_DELAY_MS = 1000;
+  private static readonly MAX_CRASH_RECOVERIES = 3;
 
   private deps: AutoExecutorDependencies;
   private enabled: boolean;
   private pendingNewSessionItem: QueueItem | null = null;
   private currentExecutingItem: QueueItem | null = null;
   private restartRetryCount = 0;
+  private crashRecoveryCount = 0;
   private queueExecutionActive = false;
   private executeInProgress = false;
   private pendingExecuteRequest = false;
@@ -133,6 +135,7 @@ export class AutoExecutor extends EventEmitter {
       this.currentExecutingItem = null;
     }
 
+    this.deps.display.setCurrentItem(null);
     const queueLength = this.deps.queueManager.getLength();
 
     // Stop auto-execution
@@ -203,8 +206,12 @@ export class AutoExecutor extends EventEmitter {
       if (this.pendingNewSessionItem) {
         const item = this.pendingNewSessionItem;
         this.pendingNewSessionItem = null;
-        const truncated = this.truncatePrompt(item.prompt);
-        this.deps.display.showMessage('info', `[Queue] Executing: "${truncated}"`);
+        if (!item.prompt.trim()) {
+          logger.debug('Skipping empty pending new session prompt');
+          this.currentExecutingItem = null;
+          return;
+        }
+        this.deps.display.setCurrentItem(item);
         this.deps.ptyWrapper.write(item.prompt);
         await new Promise((resolve) => setTimeout(resolve, 50));
         this.deps.ptyWrapper.write('\r');
@@ -219,6 +226,7 @@ export class AutoExecutor extends EventEmitter {
 
       if (!item) {
         // Queue is empty - auto-execution idle (AC 6)
+        this.deps.display.setCurrentItem(null);
         logger.debug({ queueExecutionActive: this.queueExecutionActive }, 'Queue empty, checking queue_completed condition');
         if (this.queueExecutionActive) {
           this.queueExecutionActive = false;
@@ -251,6 +259,7 @@ export class AutoExecutor extends EventEmitter {
 
       // Handle breakpoint - pause auto-execution
       if (item.isBreakpoint) {
+        this.deps.display.setCurrentItem(null);
         if (item.prompt) {
           this.deps.display.showMessage('info', `[Queue] Breakpoint: "${item.prompt}"`);
         } else {
@@ -310,15 +319,33 @@ export class AutoExecutor extends EventEmitter {
         }
       }
 
+      // Handle delay directive: wait then proceed to next item
+      if (item.delayMs) {
+        this.deps.display.showMessage('info', `[Queue] Waiting ${item.delayMs}ms...`);
+        this.emit('executed', item);
+        this.currentExecutingItem = null;
+        await new Promise((resolve) => setTimeout(resolve, item.delayMs));
+        logger.info({ delayMs: item.delayMs }, 'Delay completed');
+        // After delay, trigger next execution immediately (no READY signal needed)
+        void this.executeNext();
+        return;
+      }
+
       // Handle new session flag (including resume)
       if (item.isNewSession || item.resumeSessionId) {
         await this.handleNewSession(item);
         return;
       }
 
-      // Show notification before execution (AC 3)
-      const truncated = this.truncatePrompt(item.prompt);
-      this.deps.display.showMessage('info', `[Queue] Executing: "${truncated}"`);
+      // Skip empty prompts (e.g. empty multiline block @( @))
+      if (!item.prompt.trim()) {
+        logger.debug('Skipping empty prompt');
+        this.currentExecutingItem = null;
+        return;
+      }
+
+      // Show current executing item in status bar persistently
+      this.deps.display.setCurrentItem(item);
 
       // Execute prompt (AC 1, 2)
       // Send text first, then Enter separately (Claude Code handles them differently)
@@ -329,6 +356,7 @@ export class AutoExecutor extends EventEmitter {
       // Emit executed event and clear tracking (successful execution)
       this.emit('executed', item);
       this.currentExecutingItem = null;
+      this.crashRecoveryCount = 0;
       logger.info({ prompt: item.prompt.substring(0, 50) }, 'Queue item executed');
       } catch (error) {
         // Handle queue file I/O errors gracefully
@@ -374,6 +402,7 @@ export class AutoExecutor extends EventEmitter {
       // Only set pending item if there's a prompt to execute
       if (item.prompt) {
         this.pendingNewSessionItem = item;
+        this.deps.display.setCurrentItem(item);
       }
       this.emit('session_restart', item);
       logger.info({
@@ -418,15 +447,6 @@ export class AutoExecutor extends EventEmitter {
   }
 
   /**
-   * Truncate prompt for display
-   */
-  private truncatePrompt(prompt: string, maxLength: number = 30): string {
-    return prompt.length > maxLength
-      ? prompt.slice(0, maxLength) + '...'
-      : prompt;
-  }
-
-  /**
    * Start auto-execution
    */
   start(): void {
@@ -449,6 +469,7 @@ export class AutoExecutor extends EventEmitter {
     return this.enabled;
   }
 
+
   /**
    * Check if PTY exit happened during a session load (recoverable)
    * Returns true if there's a pending new session item waiting for READY
@@ -467,6 +488,7 @@ export class AutoExecutor extends EventEmitter {
 
     this.pendingNewSessionItem = null;
     this.currentExecutingItem = null;
+    this.deps.display.setCurrentItem(null);
 
     // Re-add the failed item to queue front
     try {
@@ -511,8 +533,13 @@ export class AutoExecutor extends EventEmitter {
   /**
    * Handle PTY crash during queue execution.
    * Re-adds the current executing item to queue front for retry after restart.
+   * Returns false if max crash recoveries exceeded (caller should not restart PTY).
    */
-  async handlePtyCrashRecovery(): Promise<void> {
+  async handlePtyCrashRecovery(): Promise<boolean> {
+    this.crashRecoveryCount++;
+    logger.warn({ crashRecoveryCount: this.crashRecoveryCount, max: AutoExecutor.MAX_CRASH_RECOVERIES },
+      'Crash recovery attempt');
+
     const itemsToRecover: QueueItem[] = [];
     if (this.currentExecutingItem) {
       itemsToRecover.push(this.currentExecutingItem);
@@ -535,12 +562,33 @@ export class AutoExecutor extends EventEmitter {
     }
     this.currentExecutingItem = null;
     this.pendingNewSessionItem = null;
+    this.deps.display.setCurrentItem(null);
 
     // Reset state detector for fresh READY detection after PTY restart
     this.deps.stateDetector.reset();
 
     // Reset terminal emulator
     this.deps.terminalEmulator?.clear();
+
+    // Check if max recoveries exceeded
+    if (this.crashRecoveryCount >= AutoExecutor.MAX_CRASH_RECOVERIES) {
+      const queueLength = this.deps.queueManager.getLength();
+      this.crashRecoveryCount = 0;
+      this.stop();
+      this.deps.display.setPaused(true);
+      this.deps.display.showMessage('error',
+        `[Queue] Claude Code crashed ${AutoExecutor.MAX_CRASH_RECOVERIES} times consecutively. Auto-execution stopped (${queueLength} items remaining).`);
+      this.emit('task_failed', 'Repeated PTY crashes');
+      this.deps.telegramNotifier?.notify('task_failed', {
+        queueLength,
+        message: `PTY crashed ${AutoExecutor.MAX_CRASH_RECOVERIES} times consecutively`,
+      });
+      logger.error({ crashCount: AutoExecutor.MAX_CRASH_RECOVERIES, queueLength },
+        'Max crash recoveries exceeded, stopping queue');
+      return false;
+    }
+
+    return true;
   }
 
   /**
@@ -554,6 +602,8 @@ export class AutoExecutor extends EventEmitter {
       resumeSessionId: item.resumeSessionId,
       loadSessionLabel: item.loadSessionLabel,
       isMultiline: item.isMultiline,
+      modelName: item.modelName,
+      delayMs: item.delayMs,
     };
   }
 }

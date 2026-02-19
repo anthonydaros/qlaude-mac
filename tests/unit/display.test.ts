@@ -89,7 +89,7 @@ describe('Display', () => {
       expect(output).not.toContain('Task 4');
     });
 
-    it('should mark new session items with [NEW]', () => {
+    it('should mark new session items with [New Session]', () => {
       // Given
       const items: QueueItem[] = [
         { prompt: 'Normal task', isNewSession: false },
@@ -101,7 +101,7 @@ describe('Display', () => {
 
       // Then
       const output = mockWrite.mock.calls.map((c) => c[0]).join('');
-      expect(output).toContain('[NEW]');
+      expect(output).toContain('[New Session]');
     });
 
     it('should not render when disabled', () => {

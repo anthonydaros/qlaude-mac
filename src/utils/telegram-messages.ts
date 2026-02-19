@@ -5,7 +5,7 @@
 
 export type Language = 'ko' | 'en';
 
-const messages: Record<Language, Record<string, string>> = {
+export const messages: Record<Language, Record<string, string>> = {
   ko: {
     // Notification titles
     'notify.selection_prompt': '입력 필요',
@@ -17,8 +17,8 @@ const messages: Record<Language, Record<string, string>> = {
     'notify.pty_crashed': 'Claude Code 크래시 복구',
 
     // Queue info
-    'queue.items': '📋 큐: {count}개 항목',
-    'queue.items_short': '큐: {count}개 항목',
+    'queue.label': '큐',
+    'queue.items': '{count}개 항목',
 
     // Buttons
     'button.cancel': '⬅️ 취소',
@@ -75,8 +75,8 @@ const messages: Record<Language, Record<string, string>> = {
     'notify.pty_crashed': 'Claude Code Crash Recovery',
 
     // Queue info
-    'queue.items': '📋 Queue: {count} items',
-    'queue.items_short': 'Queue: {count} items',
+    'queue.label': 'Queue',
+    'queue.items': '{count} items',
 
     // Buttons
     'button.cancel': '⬅️ Cancel',

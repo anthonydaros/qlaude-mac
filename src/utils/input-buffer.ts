@@ -62,55 +62,10 @@ export class InputBuffer {
       return { action: 'passthrough', data: input };
     }
 
-    // Check if this could start a queue command
-    if (!this.isBuffering) {
-      if (input === '>' || input === '<') {
-        // Start buffering - might be a queue command
-        this.isBuffering = true;
-        this.buffer = input;
-        // Echo the character to stdout only (not to PTY)
-        return { action: 'echo', data: input };
-      }
-      // Not a potential command, pass through to PTY
-      return { action: 'passthrough', data: input };
-    }
-
-    // Already buffering - continue
-    this.buffer += input;
-
-    // Check if buffer could still be a queue command
-    if (this.couldBeQueueCommand(this.buffer)) {
-      // Echo the character to stdout only and continue buffering
-      return { action: 'echo', data: input };
-    }
-
-    // Buffer doesn't look like a queue command anymore
-    // Flush everything as passthrough
-    const buffered = this.buffer;
-    this.clear();
-    return { action: 'passthrough', data: buffered };
-  }
-
-  /**
-   * Check if the partial input could still become a queue command
-   */
-  private couldBeQueueCommand(partial: string): boolean {
-    // Queue command patterns:
-    // >> (add), >>> (new session), >>! (reload), >>@ (toggle), << (remove)
-    const patterns = ['>> ', '>>> ', '>>!', '>>@', '<<'];
-
-    for (const pattern of patterns) {
-      // Check if partial matches start of pattern
-      if (pattern.startsWith(partial)) {
-        return true;
-      }
-      // Check if partial starts with a complete pattern prefix
-      if (partial.startsWith(pattern)) {
-        return true;
-      }
-    }
-
-    return false;
+    // No shortcut buffering needed - queue input mode is triggered
+    // by : character in main.ts, not here
+    // All input passes through to PTY
+    return { action: 'passthrough', data: input };
   }
 
   /**

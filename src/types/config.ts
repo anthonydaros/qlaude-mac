@@ -47,8 +47,17 @@ export interface TelegramConfig {
    * Per-notification-type layout templates.
    * Available types: selection_prompt, interrupted, breakpoint, queue_started,
    * queue_completed, task_failed, pty_crashed, default.
-   * Variables: {header}, {emoji}, {title}, {hostInfo}, {instanceInfo},
-   * {project}, {queue}, {message}, {context}, {options}.
+   *
+   * Common variables (all types):
+   *   {title} — event title, {hostname}, {ip}, {instanceId}, {project}, {queueLength}
+   * Type-specific variables:
+   *   breakpoint: {reason} — pause reason
+   *   task_failed: {error} — failure message
+   *   pty_crashed: {recovery} — recovery status
+   *   selection_prompt: {context} — screen context (code block), {options} — option list
+   *
+   * All variables are raw data (MarkdownV2-escaped). Add your own emojis and formatting.
+   * Lines that become empty after substitution are automatically removed.
    */
   templates?: Record<string, string>;
 }
