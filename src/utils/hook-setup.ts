@@ -102,7 +102,7 @@ export function writeClaudeSettings(settings: ClaudeSettings): void {
     mkdirSync(dir, { recursive: true });
   }
 
-  writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf-8');
+  writeFileSync(settingsPath, JSON.stringify(settings, null, 2), { encoding: 'utf-8', mode: 0o600 });
 }
 
 /**
@@ -228,16 +228,21 @@ export function readSessionId(cwd: string = process.cwd()): string | null {
 
 /**
  * Write session ID to file
- * @param sessionId Session ID to write
+ * @param sessionId Session ID to write (must be alphanumeric/hyphens/underscores only)
  * @param cwd Working directory where session file should be created
  */
 export function writeSessionId(sessionId: string, cwd: string = process.cwd()): void {
+  // Validate session ID to prevent writing arbitrary content
+  if (!/^[a-zA-Z0-9_-]+$/.test(sessionId)) {
+    throw new Error('Invalid session ID format');
+  }
+
   const sessionFile = getSessionIdFilePath(cwd);
   const dir = dirname(sessionFile);
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true });
   }
-  writeFileSync(sessionFile, sessionId, 'utf-8');
+  writeFileSync(sessionFile, sessionId, { encoding: 'utf-8', mode: 0o600 });
 }
 
 /**

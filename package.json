@@ -4,6 +4,14 @@
   "description": "Claude Code wrapper with enhanced features",
   "author": "qlaude team",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/starsh2001/qlaude.git"
+  },
+  "homepage": "https://github.com/starsh2001/qlaude",
+  "bugs": {
+    "url": "https://github.com/starsh2001/qlaude/issues"
+  },
   "type": "module",
   "main": "./dist/main.js",
   "bin": {

@@ -13,12 +13,35 @@
  * Output: Writes session_id to .qlaude/session in current directory
  */
 
+import { resolve, join } from 'path';
+import { existsSync } from 'fs';
 import { writeSessionId } from '../utils/hook-setup.js';
 
 interface SessionStartInput {
   session_id: string;
   cwd?: string;
   [key: string]: unknown;
+}
+
+/**
+ * Validate that a session_id contains only safe characters (alphanumeric, hyphens, underscores)
+ * to prevent path traversal via crafted session IDs.
+ */
+function isValidSessionId(sessionId: string): boolean {
+  return /^[a-zA-Z0-9_-]+$/.test(sessionId);
+}
+
+/**
+ * Validate that the given cwd is an existing directory.
+ * Resolves to absolute path to prevent path traversal.
+ */
+function isValidCwd(cwd: string): boolean {
+  try {
+    const resolved = resolve(cwd);
+    return existsSync(resolved);
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -53,8 +76,18 @@ async function main(): Promise<void> {
       process.exit(1);
     }
 
-    // Use cwd from input if provided, otherwise use process.cwd()
-    const cwd = data.cwd || process.cwd();
+    // Validate session_id to prevent path traversal
+    if (!isValidSessionId(data.session_id)) {
+      console.error('qlaude-session-hook: Invalid session_id format');
+      process.exit(1);
+    }
+
+    // Validate and resolve cwd to prevent path traversal
+    const cwd = data.cwd ? resolve(data.cwd) : process.cwd();
+    if (data.cwd && !isValidCwd(cwd)) {
+      console.error('qlaude-session-hook: Invalid cwd path');
+      process.exit(1);
+    }
 
     // Write session ID to file
     writeSessionId(data.session_id, cwd);

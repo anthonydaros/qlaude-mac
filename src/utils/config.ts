@@ -132,7 +132,7 @@ function ensureMessageFiles(qlaudeDir: string): void {
   for (const lang of ['ko', 'en'] as Language[]) {
     const filePath = join(messagesDir, `${lang}.json`);
     if (!existsSync(filePath)) {
-      writeFileSync(filePath, JSON.stringify(defaultMessages[lang], null, 2) + '\n', 'utf-8');
+      writeFileSync(filePath, JSON.stringify(defaultMessages[lang], null, 2) + '\n', { encoding: 'utf-8', mode: 0o600 });
       logger.info({ path: filePath }, `Created message file: ${lang}.json`);
     }
   }
@@ -214,7 +214,8 @@ export function ensureConfigDir(): boolean {
     for (const file of files) {
       const filePath = join(cwdDir, file.name);
       if (!existsSync(filePath)) {
-        writeFileSync(filePath, file.generate(), 'utf-8');
+        // Use restrictive permissions (owner-only) for config files that may contain secrets
+        writeFileSync(filePath, file.generate(), { encoding: 'utf-8', mode: 0o600 });
         logger.info({ path: filePath }, `Created config file: ${file.name}`);
         created = true;
       }

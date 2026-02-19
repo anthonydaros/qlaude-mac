@@ -194,7 +194,7 @@ export class StateDetector extends EventEmitter {
 
       // Parse options if SELECTION_PROMPT detected
       const metadata: StateMetadata = {
-        bufferSnapshot: content.slice(-1000),
+        bufferSnapshot: content,
       };
 
       if (detectedState === 'SELECTION_PROMPT') {

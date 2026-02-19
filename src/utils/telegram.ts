@@ -150,6 +150,14 @@ export class TelegramNotifier extends EventEmitter {
     this.instanceId = `${this.hostname}:${process.pid}`;
   }
 
+  /**
+   * Build Telegram API URL for a given method.
+   * Centralizes URL construction to keep the bot token contained.
+   */
+  private apiUrl(method: string): string {
+    return `https://api.telegram.org/bot${this.config.botToken}/${method}`;
+  }
+
   emit<K extends keyof TelegramNotifierEvents>(
     event: K,
     ...args: Parameters<TelegramNotifierEvents[K]>
@@ -254,7 +262,7 @@ export class TelegramNotifier extends EventEmitter {
   private async pollUpdates(): Promise<void> {
     if (!this.isEnabled()) return;
 
-    const url = `https://api.telegram.org/bot${this.config.botToken}/getUpdates`;
+    const url = this.apiUrl('getUpdates');
     const now = Date.now();
 
     try {
@@ -617,7 +625,7 @@ export class TelegramNotifier extends EventEmitter {
    * Reply to a message
    */
   private async replyToMessage(chatId: number, messageId: number, text: string): Promise<void> {
-    const url = `https://api.telegram.org/bot${this.config.botToken}/sendMessage`;
+    const url = this.apiUrl('sendMessage');
 
     try {
       const response = await fetch(url, {
@@ -630,8 +638,7 @@ export class TelegramNotifier extends EventEmitter {
         }),
       });
       if (!response.ok) {
-        const errorBody = await response.text();
-        logger.warn({ status: response.status, body: errorBody, textLength: text.length }, 'Telegram reply failed');
+        logger.warn({ status: response.status, textLength: text.length }, 'Telegram reply failed');
       } else {
         logger.debug({ chatId, messageId, textLength: text.length }, 'Telegram reply sent');
       }
@@ -646,7 +653,7 @@ export class TelegramNotifier extends EventEmitter {
   async sendPlainMessage(text: string): Promise<void> {
     if (!this.isEnabled()) return;
 
-    const url = `https://api.telegram.org/bot${this.config.botToken}/sendMessage`;
+    const url = this.apiUrl('sendMessage');
 
     try {
       await fetch(url, {
@@ -677,7 +684,7 @@ export class TelegramNotifier extends EventEmitter {
   ): Promise<boolean> {
     if (!this.isEnabled()) return false;
 
-    const url = `https://api.telegram.org/bot${this.config.botToken}/sendDocument`;
+    const url = this.apiUrl('sendDocument');
 
     try {
       const fs = await import('fs');
@@ -706,8 +713,7 @@ export class TelegramNotifier extends EventEmitter {
       });
 
       if (!response.ok) {
-        const error = await response.text();
-        logger.warn({ status: response.status, error }, 'Failed to send document');
+        logger.warn({ status: response.status }, 'Failed to send document');
         return false;
       }
 
@@ -787,7 +793,7 @@ export class TelegramNotifier extends EventEmitter {
    * Returns the message ID of the sent message
    */
   private async sendForceReplyMessage(chatId: number, text: string): Promise<number | null> {
-    const url = `https://api.telegram.org/bot${this.config.botToken}/sendMessage`;
+    const url = this.apiUrl('sendMessage');
 
     try {
       const response = await fetch(url, {
@@ -822,7 +828,7 @@ export class TelegramNotifier extends EventEmitter {
    * Answer a callback query
    */
   private async answerCallback(callbackId: string, text: string): Promise<void> {
-    const url = `https://api.telegram.org/bot${this.config.botToken}/answerCallbackQuery`;
+    const url = this.apiUrl('answerCallbackQuery');
 
     try {
       await fetch(url, {
@@ -842,7 +848,7 @@ export class TelegramNotifier extends EventEmitter {
    * Edit message to show which button was pressed
    */
   private async editMessageButtons(chatId: number, messageId: number, selectedCmd: string): Promise<void> {
-    const url = `https://api.telegram.org/bot${this.config.botToken}/editMessageReplyMarkup`;
+    const url = this.apiUrl('editMessageReplyMarkup');
 
     try {
       await fetch(url, {
@@ -1171,7 +1177,7 @@ export class TelegramNotifier extends EventEmitter {
   private cleanContext(context: string): string {
     // Patterns to filter out (UI chrome, not actual content)
     const filterPatterns = [
-      /^[─━═╌╍┄┅┈┉─\-_]{5,}$/,  // Horizontal lines (5+ chars)
+      /^[─━═╌╍┄┅┈┉\-_╯╮╰╭╗╝╚╔┐┘└┌┤├┬┴┼]{5,}$/,  // Horizontal lines and box-drawing borders (5+ chars)
       /Enter to select/i,
       /↑\/↓ to navigate/i,
       /←\/→ or tab to cycle/i,
@@ -1195,11 +1201,6 @@ export class TelegramNotifier extends EventEmitter {
       .join('\n')
       .trim();
 
-    // Limit length to prevent huge messages
-    const maxLength = 500;
-    if (cleaned.length > maxLength) {
-      return cleaned.slice(0, maxLength) + '...';
-    }
     return cleaned;
   }
 
@@ -1218,7 +1219,7 @@ export class TelegramNotifier extends EventEmitter {
    * Stores message_id for direct reply support
    */
   private async sendMessage(text: string, keyboard?: InlineButton[][] | null): Promise<void> {
-    const url = `https://api.telegram.org/bot${this.config.botToken}/sendMessage`;
+    const url = this.apiUrl('sendMessage');
 
     const body: Record<string, unknown> = {
       chat_id: this.config.chatId,
@@ -1242,8 +1243,7 @@ export class TelegramNotifier extends EventEmitter {
       });
 
       if (!response.ok) {
-        const error = await response.text();
-        logger.warn({ status: response.status, error }, 'Telegram API error');
+        logger.warn({ status: response.status }, 'Telegram API error');
       } else {
         // Store message_id for direct reply support
         const data = await response.json() as { ok: boolean; result?: { message_id: number } };

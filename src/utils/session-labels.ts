@@ -56,7 +56,7 @@ function writeSessionLabels(labels: SessionLabelsStorage): void {
     if (!existsSync(dir)) {
       mkdirSync(dir, { recursive: true });
     }
-    writeFileSync(filePath, JSON.stringify(labels, null, 2), 'utf-8');
+    writeFileSync(filePath, JSON.stringify(labels, null, 2), { encoding: 'utf-8', mode: 0o600 });
   } catch (err) {
     logger.error({ err, filePath }, 'Failed to write session labels');
     throw err;

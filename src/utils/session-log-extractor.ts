@@ -6,9 +6,18 @@
  */
 
 import { readFileSync, existsSync } from 'fs';
-import { join } from 'path';
+import { join, basename } from 'path';
 import { homedir } from 'os';
 import { logger } from './logger.js';
+
+/**
+ * Validate that a session ID contains only safe characters.
+ * Claude session IDs are UUIDs (alphanumeric + hyphens).
+ * This prevents path traversal via crafted session IDs like "../../etc/passwd".
+ */
+function isValidSessionId(sessionId: string): boolean {
+  return /^[a-zA-Z0-9_-]+$/.test(sessionId);
+}
 
 interface SessionIndex {
   version: number;
@@ -63,7 +72,7 @@ function getClaudeProjectsDir(): string {
 
 /**
  * Convert current working directory to Claude's project folder name
- * e.g., "D:\repo\qlaude-code" -> "d--repo-qlaude-code"
+ * e.g., "D:\repo\qlaude" -> "d--repo-qlaude"
  */
 function cwdToProjectFolder(cwd: string): string {
   // Normalize path separators and convert to lowercase
@@ -244,6 +253,11 @@ export function getCurrentSessionId(cwd: string): string | null {
  * Get the JSONL file path for a session
  */
 export function getSessionFilePath(cwd: string, sessionId: string): string | null {
+  if (!isValidSessionId(sessionId)) {
+    logger.warn({ sessionId }, 'Invalid session ID format, rejecting');
+    return null;
+  }
+
   const projectFolder = findProjectFolder(cwd);
   if (!projectFolder) {
     return null;
@@ -429,6 +443,11 @@ export function formatConversationsForLog(
  * Returns a formatted string suitable for Telegram notifications
  */
 export function getLastAssistantContext(cwd: string, sessionId: string): string | null {
+  if (!isValidSessionId(sessionId)) {
+    logger.warn({ sessionId }, 'Invalid session ID format, rejecting');
+    return null;
+  }
+
   const sessionPath = getSessionFilePath(cwd, sessionId);
   if (!sessionPath || !existsSync(sessionPath)) {
     logger.debug({ cwd, sessionId }, 'Session file not found for context extraction');

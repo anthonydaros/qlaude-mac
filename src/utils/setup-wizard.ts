@@ -141,7 +141,8 @@ export function updateTelegramConfig(fields: Record<string, unknown>): void {
     // File may not exist or be invalid — start fresh
   }
   const merged = { ...existing, ...fields };
-  writeFileSync(configPath, JSON.stringify(merged, null, 2) + '\n', 'utf-8');
+  // Use restrictive permissions since telegram.json contains the bot token
+  writeFileSync(configPath, JSON.stringify(merged, null, 2) + '\n', { encoding: 'utf-8', mode: 0o600 });
 }
 
 /**
