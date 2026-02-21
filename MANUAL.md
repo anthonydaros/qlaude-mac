@@ -1,5 +1,39 @@
 # qlaude Manual
 
+## Quick Guide
+
+```bash
+npm install -g qlaude@alpha    # Install
+qlaude                         # Run in your project directory
+```
+
+On first run, qlaude creates `.qlaude/` with config templates. Edit `.qlaude/queue` to preload prompts:
+
+```
+@model sonnet
+Implement user authentication with JWT
+Write unit tests for all auth endpoints
+@new
+@model opus
+Review the entire codebase for security issues
+```
+
+While running, press `:` to enter commands:
+
+| Command | What it does |
+|---------|--------------|
+| `:add <prompt>` | Add a prompt to the queue |
+| `:pause` / `:resume` | Pause or resume auto-execution |
+| `:reload` | Reload queue from `.qlaude/queue` |
+| `:save <name>` / `:load <name>` | Save or resume a session by name |
+| `:model <name>` | Switch Claude model (e.g., `opus`, `sonnet`) |
+
+Queue directives (`@new`, `@model`, `@pause`, `@save`, `@load`, `@delay`) control execution flow. Multiline prompts use `:(` ... `:)` interactively or `@(` ... `@)` in queue files.
+
+For Telegram remote control, save your bot token and chat ID in `~/.qlaude/telegram.json` (global) and enable in `.qlaude/telegram.json` (per-project). See [Telegram Integration](#telegram-integration).
+
+---
+
 ## Table of Contents
 
 - [Installation](#installation)
@@ -86,7 +120,7 @@ On first run, qlaude automatically creates a `.qlaude/` directory in the current
 - `.qlaude/patterns.json` — State detection patterns
 - `.qlaude/telegram.json` — Telegram settings
 
-Config search order: current working directory (`.qlaude/`) → home directory (`~/.qlaude/`) → defaults.
+Config is loaded from the current working directory's `.qlaude/` directory. Missing files use defaults.
 
 ### Common Settings
 
@@ -120,29 +154,37 @@ Edit `.qlaude/config.json` to customize:
 
 ### Telegram Settings
 
-Edit `.qlaude/telegram.json` to customize:
+Telegram settings are split between global credentials and per-project configuration:
+
+**Global credentials** (`~/.qlaude/telegram.json`) — shared across all projects:
+
+```json
+{
+  "botToken": "123456:ABC-DEF...",
+  "chatId": "987654321"
+}
+```
+
+**Per-project settings** (`.qlaude/telegram.json`) — project-specific overrides:
 
 ```json
 {
   "enabled": false,
-  "botToken": "your-bot-token",
-  "chatId": "your-chat-id",
-  "language": "en",
-  "confirmDelayMs": 30000,
-  "messages": {},
-  "templates": {}
+  "language": "en"
 }
 ```
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| `enabled` | `false` | Enable Telegram notifications |
-| `botToken` | — | Telegram Bot API token |
-| `chatId` | — | Target chat ID |
-| `language` | `"en"` | Message language: `"en"` (English) or `"ko"` (Korean) |
-| `confirmDelayMs` | `30000` | Delay (ms) before confirming updates for multi-instance polling |
-| `messages` | `{}` | Override individual message strings (keys match `telegram-messages.ts` catalog) |
-| `templates` | `{}` | Per-notification-type layout templates |
+Per-project settings are merged on top of global credentials. You can also override `botToken`/`chatId` per-project if needed.
+
+| Option | Location | Default | Description |
+|--------|----------|---------|-------------|
+| `botToken` | global | — | Telegram Bot API token |
+| `chatId` | global | — | Target chat ID |
+| `enabled` | project | `false` | Enable Telegram notifications |
+| `language` | project | auto | Message language: `"en"` (English) or `"ko"` (Korean). Auto-detected from system locale on first run. |
+| `confirmDelayMs` | project | `30000` | Delay (ms) before confirming updates for multi-instance polling |
+| `messages` | project | `{}` | Override individual message strings (keys match `telegram-messages.ts` catalog) |
+| `templates` | project | `{}` | Per-notification-type layout templates |
 
 ### Runtime Files
 
@@ -448,15 +490,24 @@ Enable in `.qlaude/config.json`:
 
 1. Create a Telegram bot via [@BotFather](https://t.me/BotFather)
 2. Get your chat ID (send a message to your bot, then check `https://api.telegram.org/bot<TOKEN>/getUpdates`)
-3. Configure in `.qlaude/telegram.json`:
+3. Save credentials in `~/.qlaude/telegram.json` (global, shared across all projects):
 
 ```json
 {
-  "enabled": true,
   "botToken": "123456:ABC-DEF...",
   "chatId": "987654321"
 }
 ```
+
+4. Enable per-project in `.qlaude/telegram.json`:
+
+```json
+{
+  "enabled": true
+}
+```
+
+On first run, `qlaude` can configure this interactively via the setup wizard.
 
 ### Notifications
 
@@ -571,11 +622,9 @@ qlaude uses regex patterns to detect each state. All patterns are customizable v
 - `←/→ or tab to cycle` — Tab cycling UI
 - `> N. text` — Numbered option with `>` prefix
 
-**Spinner patterns** (default):
-- Unicode spinners with ellipsis (`*…`, `·…`, etc.)
-- `Activating…`
-- Braille dots spinners (`⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏`)
-- Circle spinners (`◐◓◑◒`)
+**Spinner pattern** (built-in, not customizable):
+- Line starting with a spinner character (`✻`, `·`, `*`, etc.) and ending with `…` (ellipsis)
+- Example: `✻ Reading file…`, `* Imagining… (55s · ↓ 1.2k tokens · thinking)`
 
 **Task failure patterns** (default):
 - `QUEUE_STOP` or `QUEUE_STOP: reason`
@@ -594,14 +643,18 @@ If false READY detections are frequent (next prompt sent while Claude is mid-tas
 - Increase `requiredStableChecks` (e.g., 5) — more consecutive stable screens required
 
 If READY detection is too slow (noticeable delay after Claude actually finishes):
-- Decrease `idleThresholdMs` (minimum recommended: 3000)
+- Decrease `idleThresholdMs` (e.g., 500–800)
 - Decrease `requiredStableChecks` (minimum 1)
 
 ---
 
 ## Customizing Patterns
 
-All state detection patterns can be customized in `.qlaude/patterns.json`. Each pattern category can be independently configured.
+Most state detection patterns can be customized in `.qlaude/patterns.json`. Each pattern category can be independently configured.
+
+> **Note:** The `.qlaude/patterns.json` file is empty (`{}`) by default. Only add entries when you need to override a specific category. Absent categories always use the latest built-in defaults, ensuring that bug fixes and improvements are automatically applied on upgrade.
+
+> **Note:** Spinner detection uses a built-in pattern and is not customizable via `patterns.json`. If your `patterns.json` contains a `spinner` entry from an older version, it will be ignored.
 
 ### Pattern Categories
 
@@ -609,7 +662,6 @@ All state detection patterns can be customized in `.qlaude/patterns.json`. Each 
 |----------|-------------|---------------|
 | `selectionPrompt` | Patterns to detect selection/permission UIs | 6 patterns |
 | `interrupted` | Patterns to detect interruption | 5 patterns |
-| `spinner` | Patterns to detect active spinners | 7 patterns |
 | `taskFailure` | Patterns to detect task failure markers | 3 patterns |
 | `textInputKeywords` | Keywords for text input option detection (Telegram) | 9 patterns |
 | `optionParse` | Single pattern to parse numbered options | 1 pattern |
@@ -618,7 +670,7 @@ All state detection patterns can be customized in `.qlaude/patterns.json`. Each 
 
 ### Override Semantics
 
-For multi-pattern categories (`selectionPrompt`, `interrupted`, `spinner`, `taskFailure`, `textInputKeywords`):
+For multi-pattern categories (`selectionPrompt`, `interrupted`, `taskFailure`, `textInputKeywords`):
 
 | Config | Behavior |
 |--------|----------|
@@ -646,16 +698,6 @@ Patterns can be specified as plain strings (regex source) or objects with flags:
 ```
 
 ### Examples
-
-**Disable spinner detection** (not recommended):
-
-```json
-{
-  "spinner": {
-    "enabled": false
-  }
-}
-```
 
 **Add a custom task failure pattern**:
 
@@ -759,7 +801,7 @@ Override individual message strings in `.qlaude/telegram.json` under `messages`.
 
 **Queue info** (`queue.*`):
 - `queue.items` — Queue item count (placeholder: `{count}`)
-- `queue.items_short` — Short queue count
+- `queue.label` — Queue label
 
 **Buttons** (`button.*`):
 - `button.cancel` — Cancel button text
@@ -933,9 +975,9 @@ This automatically sets log level to debug. Check the log for state transitions,
 
 **False SELECTION_PROMPT**: Some Claude output may match selection patterns. Check the debug log for `bufferSnapshot` to see what triggered the detection. You can customize selection prompt patterns in `.qlaude/patterns.json`.
 
-**Spinner safety pause fires incorrectly**: Spinner patterns matched on screen content that isn't actually a spinner. Customize spinner patterns in `.qlaude/patterns.json` to exclude the false positive.
+**Spinner safety pause fires incorrectly**: The built-in spinner pattern may match non-spinner content. Check the debug log for `Spinner pattern matched` to see what triggered it. If this is a recurring issue, please report it.
 
-**Telegram not working**: Verify `botToken` and `chatId` in `.qlaude/telegram.json`. Check that the bot has permission to send messages to the chat. Look for Telegram errors in the debug log.
+**Telegram not working**: Verify `botToken` and `chatId` in `~/.qlaude/telegram.json` (global credentials) and `enabled` in `.qlaude/telegram.json` (per-project). Check that the bot has permission to send messages to the chat. Look for Telegram errors in the debug log.
 
 **Telegram text input buttons not appearing**: Text input detection relies on keyword matching. If your options use non-standard wording, add keywords to `textInputKeywords` in `.qlaude/patterns.json`.
 

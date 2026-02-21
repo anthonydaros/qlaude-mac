@@ -22,7 +22,7 @@ function main(): void {
     console.log('');
     console.log('qlaude: Telegram Setup:');
     console.log('  1. Create bot: Message @BotFather on Telegram, send /newbot');
-    console.log('  2. Paste bot token in .qlaude/telegram.json');
+    console.log('  2. Paste bot token in ~/.qlaude/telegram.json');
     console.log('  3. Start chat with your bot and send any message');
     console.log('  4. Get chat ID: https://api.telegram.org/bot<TOKEN>/getUpdates');
     console.log('  5. Set "enabled" to true');

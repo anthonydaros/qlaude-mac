@@ -9,6 +9,7 @@ import { logger } from './utils/logger.js';
 import { DEFAULT_CONFIG } from './types/config.js';
 import type { CompiledPatterns } from './utils/pattern-compiler.js';
 import { compilePatterns } from './utils/pattern-compiler.js';
+import { SPINNER_PATTERN } from './patterns/state-patterns.js';
 
 /**
  * Function that returns screen content for pattern analysis
@@ -378,28 +379,14 @@ export class StateDetector extends EventEmitter {
   }
 
   /**
-   * Check if screen contains spinner patterns
-   * Checks entire screen content to catch spinners anywhere in the output
-   * Returns the matched pattern info for debugging
+   * Check if screen contains an active spinner line.
+   * Checks each line individually so ^ and $ anchors work correctly.
    */
   private hasSpinnerPattern(content: string): boolean {
-    if (this.patterns.spinner.patterns.length === 0) return false;
-    // Check entire viewport - multiline prompts can push spinner far above bottom
-    // Active spinners always contain … (ellipsis), completed ones don't, so false positives are unlikely
-    const spinnerPatterns = this.patterns.spinner.patterns;
-    for (let i = 0; i < spinnerPatterns.length; i++) {
-      const pattern = spinnerPatterns[i];
-      const match = content.match(pattern);
+    for (const line of content.split('\n')) {
+      const match = line.match(SPINNER_PATTERN);
       if (match) {
-        logger.debug(
-          {
-            patternIndex: i,
-            pattern: pattern.toString(),
-            matchedText: match[0],
-            contentPreview: content.slice(-200)
-          },
-          'Spinner pattern matched'
-        );
+        logger.debug({ matchedText: match[0], matchedLine: line }, 'Spinner pattern matched');
         return true;
       }
     }

@@ -14,7 +14,6 @@ import type { PatternEntry, PatternCategoryConfig, PatternsConfig } from '../typ
 import {
   DEFAULT_SELECTION_PROMPT_PATTERNS,
   DEFAULT_INTERRUPTED_PATTERNS,
-  DEFAULT_SPINNER_PATTERNS,
   DEFAULT_TASK_FAILURE_PATTERNS,
   DEFAULT_TEXT_INPUT_KEYWORDS,
   DEFAULT_OPTION_PARSE_PATTERN,
@@ -31,7 +30,6 @@ import { logger } from './logger.js';
 export interface CompiledPatterns {
   selectionPrompt: { patterns: RegExp[] };
   interrupted: { patterns: RegExp[] };
-  spinner: { patterns: RegExp[] };
   taskFailure: { patterns: RegExp[] };
   textInputKeywords: { patterns: RegExp[] };
   optionParse: { pattern: RegExp | null };
@@ -89,7 +87,6 @@ export function compilePatterns(config?: PatternsConfig): CompiledPatterns {
   const defaults: CompiledPatterns = {
     selectionPrompt: { patterns: DEFAULT_SELECTION_PROMPT_PATTERNS },
     interrupted: { patterns: DEFAULT_INTERRUPTED_PATTERNS },
-    spinner: { patterns: DEFAULT_SPINNER_PATTERNS },
     taskFailure: { patterns: DEFAULT_TASK_FAILURE_PATTERNS },
     textInputKeywords: { patterns: DEFAULT_TEXT_INPUT_KEYWORDS },
     optionParse: { pattern: DEFAULT_OPTION_PARSE_PATTERN },
@@ -139,7 +136,6 @@ export function compilePatterns(config?: PatternsConfig): CompiledPatterns {
   return {
     selectionPrompt: compileCategory(config.selectionPrompt, DEFAULT_SELECTION_PROMPT_PATTERNS),
     interrupted: compileCategory(config.interrupted, DEFAULT_INTERRUPTED_PATTERNS),
-    spinner: compileCategory(config.spinner, DEFAULT_SPINNER_PATTERNS),
     taskFailure: compileCategory(config.taskFailure, DEFAULT_TASK_FAILURE_PATTERNS),
     textInputKeywords: compileCategory(config.textInputKeywords, DEFAULT_TEXT_INPUT_KEYWORDS),
     optionParse: {

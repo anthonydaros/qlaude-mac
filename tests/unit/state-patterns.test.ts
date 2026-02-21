@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   DEFAULT_SELECTION_PROMPT_PATTERNS,
   DEFAULT_INTERRUPTED_PATTERNS,
-  DEFAULT_SPINNER_PATTERNS,
+  SPINNER_PATTERN,
   DEFAULT_TASK_FAILURE_PATTERNS,
   DEFAULT_TEXT_INPUT_KEYWORDS,
   DEFAULT_OPTION_PARSE_PATTERN,
@@ -70,20 +70,21 @@ describe('Default State Patterns', () => {
     });
   });
 
-  describe('SPINNER patterns', () => {
-    const test = (input: string) =>
-      DEFAULT_SPINNER_PATTERNS.some(p => p.test(input));
-
+  describe('SPINNER_PATTERN', () => {
     it('should match active spinner with ellipsis', () => {
-      expect(test('✻ Zigzagging… (1m 18s)')).toBe(true);
+      expect(SPINNER_PATTERN.test('✻ Zigzagging… (1m 18s)')).toBe(true);
     });
 
-    it('should match Activating spinner', () => {
-      expect(test('Activating…')).toBe(true);
+    it('should match spinner ending with ellipsis only', () => {
+      expect(SPINNER_PATTERN.test('✻ Reading file…')).toBe(true);
     });
 
     it('should NOT match completed spinner (no ellipsis)', () => {
-      expect(test('✻ Sautéed for 4m 42s')).toBe(false);
+      expect(SPINNER_PATTERN.test('✻ Sautéed for 4m 42s')).toBe(false);
+    });
+
+    it('should NOT match footer line with mid-line separator', () => {
+      expect(SPINNER_PATTERN.test('   Context left until auto-compact: 4% · /model opus[1m] for more context · Billed …')).toBe(false);
     });
   });
 

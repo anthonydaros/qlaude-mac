@@ -30,15 +30,8 @@ export const DEFAULT_INTERRUPTED_PATTERNS: RegExp[] = [
 
 // -- Spinner detection --
 
-export const DEFAULT_SPINNER_PATTERNS: RegExp[] = [
-  /[*·✢✳∗✻✽✶].*…/,      // Claude Code spinner (must have ellipsis to be active)
-  /Activating…/,          // Claude Code activation spinner
-  /[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/,  // Braille dots spinner (terminal title)
-  /[⣾⣽⣻⢿⡿⣟⣯⣷]/,      // Braille dots spinner (alternative)
-  /[◐◓◑◒]/,              // Circle quarters spinner
-  /[◴◷◶◵]/,              // Circle eighths spinner
-  /[⠁⠂⠄⡀⢀⠠⠐⠈]/,      // Braille single dot spinner
-];
+// Claude Code spinner: line starts with spinner char and ends with ellipsis (with optional parenthesized info like duration/tokens)
+export const SPINNER_PATTERN: RegExp = /^\s*[*·✢✳∗✻✽✶].*…(?:\s*\(.*\))?\s*$/;
 
 // -- Task failure detection --
 

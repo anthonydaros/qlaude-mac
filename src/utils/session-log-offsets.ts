@@ -4,13 +4,13 @@
  * Prevents duplicate logging when resuming sessions via --resume.
  * Each session ID maps to the number of messages already extracted.
  *
- * Storage: ~/.qlaude/session-log-offsets.json
+ * Storage: .qlaude/session-log-offsets.json (per-project)
  */
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { join, dirname } from 'path';
-import { homedir } from 'os';
 import { logger } from './logger.js';
+import { QLAUDE_DIR } from './config.js';
 
 /**
  * Session log offsets storage structure
@@ -23,7 +23,7 @@ interface SessionLogOffsetsStorage {
  * Get the session log offsets file path
  */
 export function getSessionLogOffsetsPath(): string {
-  return join(homedir(), '.qlaude', 'session-log-offsets.json');
+  return join(process.cwd(), QLAUDE_DIR, 'session-log-offsets.json');
 }
 
 /**

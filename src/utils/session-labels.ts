@@ -10,6 +10,7 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { join, dirname } from 'path';
 import { logger } from './logger.js';
+import { QLAUDE_DIR } from './config.js';
 
 /**
  * Session labels storage structure
@@ -23,7 +24,7 @@ interface SessionLabelsStorage {
  * Stored in .qlaude/ directory
  */
 export function getSessionLabelsPath(): string {
-  return join(process.cwd(), '.qlaude', 'session-labels.json');
+  return join(process.cwd(), QLAUDE_DIR, 'session-labels.json');
 }
 
 /**

@@ -3,24 +3,13 @@
  * Loads settings from .qlaude/ directory (config.json, patterns.json, telegram.json)
  */
 
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import { logger } from './logger.js';
 import { messages as defaultMessages, type Language } from './telegram-messages.js';
 import type { QlaudeConfig, ConversationLogConfig, TelegramConfig, PatternsConfig, PatternCategoryConfig, PatternEntry } from '../types/config.js';
 import { DEFAULT_CONFIG, DEFAULT_CONVERSATION_LOG_CONFIG, DEFAULT_TELEGRAM_CONFIG } from '../types/config.js';
-import {
-  DEFAULT_SELECTION_PROMPT_PATTERNS,
-  DEFAULT_INTERRUPTED_PATTERNS,
-  DEFAULT_SPINNER_PATTERNS,
-  DEFAULT_TASK_FAILURE_PATTERNS,
-  DEFAULT_TEXT_INPUT_KEYWORDS,
-  DEFAULT_OPTION_PARSE_PATTERN,
-  DEFAULT_TIP_FILTER_KEYWORDS,
-  DEFAULT_PROMPT_SEPARATOR_PATTERN,
-  DEFAULT_PROMPT_SEPARATOR_MIN_LENGTH,
-} from '../patterns/state-patterns.js';
 
 /** Directory name for qlaude config and data files */
 export const QLAUDE_DIR = '.qlaude';
@@ -29,17 +18,6 @@ const PATTERNS_FILE = 'patterns.json';
 const TELEGRAM_FILE = 'telegram.json';
 const MESSAGES_DIR = 'messages';
 const LEGACY_CONFIG_FILENAME = '.qlauderc.json';
-
-/**
- * Convert a RegExp to a JSON-serializable PatternEntry.
- * If the regex has flags, returns { pattern, flags }; otherwise just the source string.
- */
-function regexToEntry(regex: RegExp): PatternEntry {
-  if (regex.flags) {
-    return { pattern: regex.source, flags: regex.flags };
-  }
-  return regex.source;
-}
 
 /**
  * Generate common config template (config.json)
@@ -64,34 +42,31 @@ function generateCommonTemplate(): string {
  * Generate patterns config template (patterns.json)
  */
 function generatePatternsTemplate(): string {
-  const template = {
-    selectionPrompt: {
-      patterns: DEFAULT_SELECTION_PROMPT_PATTERNS.map(regexToEntry),
-    },
-    interrupted: {
-      patterns: DEFAULT_INTERRUPTED_PATTERNS.map(regexToEntry),
-    },
-    spinner: {
-      patterns: DEFAULT_SPINNER_PATTERNS.map(regexToEntry),
-    },
-    taskFailure: {
-      patterns: DEFAULT_TASK_FAILURE_PATTERNS.map(regexToEntry),
-    },
-    textInputKeywords: {
-      patterns: DEFAULT_TEXT_INPUT_KEYWORDS.map(regexToEntry),
-    },
-    optionParse: {
-      pattern: DEFAULT_OPTION_PARSE_PATTERN.source,
-    },
-    tipFilter: {
-      keywords: DEFAULT_TIP_FILTER_KEYWORDS,
-    },
-    promptSeparator: {
-      pattern: DEFAULT_PROMPT_SEPARATOR_PATTERN.source,
-      minLength: DEFAULT_PROMPT_SEPARATOR_MIN_LENGTH,
-    },
-  };
-  return JSON.stringify(template, null, 2) + '\n';
+  // Empty object — all built-in defaults are used when no overrides are specified.
+  // Only add entries here when you want to override a specific category.
+  return '{}\n';
+}
+
+/**
+ * Migrate old patterns.json that contains the removed "spinner" config.
+ * Backs up the old file as patterns.json.bak and creates a new empty one.
+ */
+function migratePatternsFile(qlaudeDir: string): void {
+  const filePath = join(qlaudeDir, PATTERNS_FILE);
+  if (!existsSync(filePath)) return;
+
+  try {
+    const raw = readFileSync(filePath, 'utf-8');
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object' && 'spinner' in parsed) {
+      const bakPath = filePath + '.bak';
+      renameSync(filePath, bakPath);
+      writeFileSync(filePath, '{}\n', { encoding: 'utf-8', mode: 0o600 });
+      logger.info({ bakPath }, 'Migrated old patterns.json (backed up as .bak)');
+    }
+  } catch {
+    // Ignore parse/IO errors — loadJsonFile will handle them later
+  }
 }
 
 /**
@@ -108,14 +83,12 @@ export function detectLanguage(): Language {
 
 /**
  * Generate telegram config template (telegram.json)
- * Language is auto-detected; messages are loaded from messages/{language}.json
+ * Per-project settings only — credentials come from ~/.qlaude/telegram.json
  */
 function generateTelegramTemplate(): string {
   const language = detectLanguage();
   const template = {
     enabled: false,
-    botToken: 'YOUR_BOT_TOKEN_HERE',
-    chatId: 'YOUR_CHAT_ID_HERE',
     language,
   };
   return JSON.stringify(template, null, 2) + '\n';
@@ -139,21 +112,11 @@ function ensureMessageFiles(qlaudeDir: string): void {
 }
 
 /**
- * Resolve the .qlaude directory path.
- * Search order: CWD → home directory → null
+ * Resolve the .qlaude directory path (CWD only).
  */
 function resolveQlaudeDir(): string | null {
   const cwdDir = join(process.cwd(), QLAUDE_DIR);
-  if (existsSync(cwdDir)) {
-    return cwdDir;
-  }
-
-  const homeDir = join(homedir(), QLAUDE_DIR);
-  if (existsSync(homeDir)) {
-    return homeDir;
-  }
-
-  return null;
+  return existsSync(cwdDir) ? cwdDir : null;
 }
 
 /**
@@ -161,26 +124,18 @@ function resolveQlaudeDir(): string | null {
  */
 function warnLegacyConfig(): void {
   const cwdLegacy = join(process.cwd(), LEGACY_CONFIG_FILENAME);
-  const homeLegacy = join(homedir(), LEGACY_CONFIG_FILENAME);
-
   if (existsSync(cwdLegacy)) {
     console.warn(`qlaude: Legacy config file found: ${cwdLegacy}`);
     console.warn(`qlaude: Please migrate to .qlaude/ directory structure.`);
     console.warn(`qlaude: Config files are now split into .qlaude/config.json, .qlaude/patterns.json, .qlaude/telegram.json`);
-  } else if (existsSync(homeLegacy)) {
-    console.warn(`qlaude: Legacy config file found: ${homeLegacy}`);
-    console.warn(`qlaude: Please migrate to ~/.qlaude/ directory structure.`);
   }
 }
 
 /**
- * Check if this is the first run (no .qlaude/ directory in CWD or home).
+ * Check if this is the first run (no .qlaude/ directory in CWD).
  */
 export function isFirstRun(): boolean {
-  const cwdDir = join(process.cwd(), QLAUDE_DIR);
-  if (existsSync(cwdDir)) return false;
-  const homeDir = join(homedir(), QLAUDE_DIR);
-  return !existsSync(homeDir);
+  return !existsSync(join(process.cwd(), QLAUDE_DIR));
 }
 
 /**
@@ -190,14 +145,6 @@ export function isFirstRun(): boolean {
  */
 export function ensureConfigDir(): boolean {
   const cwdDir = join(process.cwd(), QLAUDE_DIR);
-
-  // Skip if config exists in home directory (user intentionally uses global config)
-  if (!existsSync(cwdDir)) {
-    const homeDir = join(homedir(), QLAUDE_DIR);
-    if (existsSync(homeDir)) {
-      return false;
-    }
-  }
 
   try {
     if (!existsSync(cwdDir)) {
@@ -235,25 +182,41 @@ export function ensureConfigDir(): boolean {
 }
 
 /**
- * Load configuration from .qlaude/ directory.
+ * Load global Telegram credentials from ~/.qlaude/telegram.json.
+ * Returns validated partial config (botToken, chatId) or null.
+ */
+function loadGlobalTelegramConfig(): Partial<TelegramConfig> | null {
+  const globalPath = join(homedir(), QLAUDE_DIR, TELEGRAM_FILE);
+  const raw = loadJsonFile(globalPath);
+  if (!raw) return null;
+  logger.info({ path: globalPath }, 'Loading global Telegram credentials');
+  return validateTelegramConfig(raw);
+}
+
+/**
+ * Load configuration from .qlaude/ directory (CWD only).
+ * Telegram credentials are loaded from ~/.qlaude/telegram.json (global),
+ * then overlaid with per-project .qlaude/telegram.json settings.
  * Each file is loaded independently; missing files use defaults.
- * Search order:
- * 1. Current working directory .qlaude/
- * 2. User's home directory ~/.qlaude/
- * 3. Fall back to defaults
  */
 export function loadConfig(): typeof DEFAULT_CONFIG & Pick<QlaudeConfig, 'patterns' | 'logLevel' | 'logFile'> {
   // Warn about legacy config
   warnLegacyConfig();
 
+  // Load global Telegram credentials (always, even without project .qlaude/)
+  const globalTelegram = loadGlobalTelegramConfig();
+
   const qlaudeDir = resolveQlaudeDir();
 
   if (!qlaudeDir) {
     logger.debug('No .qlaude directory found, using defaults');
-    return { ...DEFAULT_CONFIG };
+    return mergeAllWithDefaults(null, null, globalTelegram);
   }
 
   logger.info({ path: qlaudeDir }, 'Loading config from .qlaude directory');
+
+  // Migrate old patterns.json that contains removed spinner config
+  migratePatternsFile(qlaudeDir);
 
   // Load each file independently
   const commonRaw = loadJsonFile(join(qlaudeDir, CONFIG_FILE));
@@ -263,10 +226,16 @@ export function loadConfig(): typeof DEFAULT_CONFIG & Pick<QlaudeConfig, 'patter
   // Validate each
   const common = commonRaw ? validateCommonConfig(commonRaw) : null;
   const patterns = patternsRaw ? validatePatternsConfig(patternsRaw) : null;
-  const telegram = telegramRaw ? validateTelegramConfig(telegramRaw) : null;
+  const projectTelegram = telegramRaw ? validateTelegramConfig(telegramRaw) : null;
+
+  // Merge: global credentials → project overrides
+  const telegram: Partial<TelegramConfig> = {
+    ...globalTelegram,
+    ...projectTelegram,
+  };
 
   // Load language-specific message file (messages/{language}.json)
-  const lang = telegram?.language ?? DEFAULT_TELEGRAM_CONFIG.language;
+  const lang = telegram.language ?? DEFAULT_TELEGRAM_CONFIG.language;
   const msgFileRaw = loadJsonFile(join(qlaudeDir, MESSAGES_DIR, `${lang}.json`));
   if (msgFileRaw && typeof msgFileRaw === 'object' && msgFileRaw !== null) {
     const fileMessages: Record<string, string> = {};
@@ -274,11 +243,7 @@ export function loadConfig(): typeof DEFAULT_CONFIG & Pick<QlaudeConfig, 'patter
       if (typeof v === 'string') fileMessages[k] = v;
     }
     // Message file is the base; telegram.json messages override on top
-    const mergedMessages = { ...fileMessages, ...telegram?.messages };
-    if (!telegram) {
-      return mergeAllWithDefaults(common, patterns, { messages: mergedMessages });
-    }
-    telegram.messages = mergedMessages;
+    telegram.messages = { ...fileMessages, ...telegram.messages };
   }
 
   return mergeAllWithDefaults(common, patterns, telegram);
@@ -509,8 +474,13 @@ function validatePatternsConfig(obj: unknown): PatternsConfig | null {
   const input = obj as Record<string, unknown>;
   const config: PatternsConfig = {};
 
+  // Warn about removed spinner customization
+  if (input.spinner !== undefined) {
+    logger.warn('patterns.json contains "spinner" config which is no longer customizable — it will be ignored');
+  }
+
   // Multi-pattern categories
-  const categories = ['selectionPrompt', 'interrupted', 'spinner', 'taskFailure', 'textInputKeywords'] as const;
+  const categories = ['selectionPrompt', 'interrupted', 'taskFailure', 'textInputKeywords'] as const;
   for (const key of categories) {
     if (input[key] !== undefined) {
       const validated = validatePatternCategory(input[key]);

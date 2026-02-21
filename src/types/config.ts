@@ -149,7 +149,6 @@ export interface PromptSeparatorConfig {
 export interface PatternsConfig {
   selectionPrompt?: PatternCategoryConfig;
   interrupted?: PatternCategoryConfig;
-  spinner?: PatternCategoryConfig;
   taskFailure?: PatternCategoryConfig;
   textInputKeywords?: PatternCategoryConfig;
   optionParse?: SinglePatternConfig;

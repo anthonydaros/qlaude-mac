@@ -3,7 +3,6 @@ import { compilePatterns } from '../../src/utils/pattern-compiler.js';
 import {
   DEFAULT_SELECTION_PROMPT_PATTERNS,
   DEFAULT_INTERRUPTED_PATTERNS,
-  DEFAULT_SPINNER_PATTERNS,
   DEFAULT_TASK_FAILURE_PATTERNS,
   DEFAULT_TEXT_INPUT_KEYWORDS,
   DEFAULT_OPTION_PARSE_PATTERN,
@@ -31,7 +30,6 @@ describe('compilePatterns', () => {
 
       expect(result.selectionPrompt.patterns).toBe(DEFAULT_SELECTION_PROMPT_PATTERNS);
       expect(result.interrupted.patterns).toBe(DEFAULT_INTERRUPTED_PATTERNS);
-      expect(result.spinner.patterns).toBe(DEFAULT_SPINNER_PATTERNS);
       expect(result.taskFailure.patterns).toBe(DEFAULT_TASK_FAILURE_PATTERNS);
       expect(result.textInputKeywords.patterns).toBe(DEFAULT_TEXT_INPUT_KEYWORDS);
       expect(result.optionParse.pattern).toBe(DEFAULT_OPTION_PARSE_PATTERN);
@@ -176,12 +174,12 @@ describe('compilePatterns', () => {
 
     it('should default to no flags when flags omitted', () => {
       const result = compilePatterns({
-        spinner: {
+        interrupted: {
           patterns: [{ pattern: 'test' }],
         },
       });
 
-      expect(result.spinner.patterns[0].flags).toBe('');
+      expect(result.interrupted.patterns[0].flags).toBe('');
     });
   });
 
@@ -209,7 +207,6 @@ describe('compilePatterns', () => {
 
       // Other categories should keep defaults
       expect(result.interrupted.patterns).toBe(DEFAULT_INTERRUPTED_PATTERNS);
-      expect(result.spinner.patterns).toBe(DEFAULT_SPINNER_PATTERNS);
     });
   });
 

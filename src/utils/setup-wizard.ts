@@ -1,17 +1,18 @@
 /**
  * First-run setup wizard for qlaude.
- * Interactive prompts for language selection and Telegram configuration.
+ * Interactive prompts for Telegram configuration.
+ * Language is auto-detected from system locale.
  * Does NOT write any files — returns collected data for the caller to persist.
  */
 
 import { createInterface, type Interface as ReadlineInterface } from 'readline';
-import { readFileSync, writeFileSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
+import { homedir } from 'os';
 import { QLAUDE_DIR, detectLanguage } from './config.js';
 import type { Language } from './telegram-messages.js';
 
 export interface WizardResult {
-  language: Language;
   telegram?: {
     enabled: boolean;
     botToken: string;
@@ -21,7 +22,6 @@ export interface WizardResult {
 
 interface WizardMessages {
   welcome: string;
-  langPrompt: string;
   telegramAsk: string;
   tokenPrompt: string;
   tokenValid: string;
@@ -38,7 +38,6 @@ interface WizardMessages {
 const wizardMessages: Record<Language, WizardMessages> = {
   ko: {
     welcome: '\n=== qlaude 설정 ===\n',
-    langPrompt: '언어 선택 (1: English, 2: 한국어)',
     telegramAsk: '텔레그램 알림을 설정하시겠습니까? (y/N)',
     tokenPrompt: '봇 토큰',
     tokenValid: '✓ 봇: @{name}',
@@ -47,13 +46,12 @@ const wizardMessages: Record<Language, WizardMessages> = {
     chatIdDetecting: 'Chat ID 감지 중...',
     chatIdPrompt: '텔레그램 앱에서 @{name} 봇에게 /start 또는 아무 메시지를 보내세요\n  자동 감지 대기 중... (Ctrl+C로 취소)',
     chatIdFound: '✓ Chat ID: {id}',
-    chatIdNotFound: '✗ 메시지를 찾지 못했습니다. 나중에 telegram.json에서 설정해주세요.',
-    done: '\n✓ 설정 완료! .qlaude/ 디렉토리에서 설정을 수정할 수 있습니다.\n',
-    skipped: '텔레그램은 나중에 .qlaude/telegram.json에서 설정할 수 있습니다.\n',
+    chatIdNotFound: '✗ 메시지를 찾지 못했습니다. 나중에 ~/.qlaude/telegram.json에서 설정해주세요.',
+    done: '\n✓ 설정 완료! 자격 증명은 ~/.qlaude/telegram.json에 저장됩니다.\n',
+    skipped: '텔레그램은 나중에 ~/.qlaude/telegram.json에서 설정할 수 있습니다.\n',
   },
   en: {
     welcome: '\n=== qlaude Setup ===\n',
-    langPrompt: 'Select language (1: English, 2: 한국어)',
     telegramAsk: 'Setup Telegram notifications? (y/N)',
     tokenPrompt: 'Bot token',
     tokenValid: '✓ Bot: @{name}',
@@ -62,9 +60,9 @@ const wizardMessages: Record<Language, WizardMessages> = {
     chatIdDetecting: 'Detecting Chat ID...',
     chatIdPrompt: 'Open Telegram and send /start or any message to @{name}\n  Waiting for message... (Ctrl+C to cancel)',
     chatIdFound: '✓ Chat ID: {id}',
-    chatIdNotFound: '✗ Could not find message. Set chat ID manually in telegram.json.',
-    done: '\n✓ Setup complete! You can modify settings in .qlaude/ directory.\n',
-    skipped: 'Telegram can be configured later in .qlaude/telegram.json.\n',
+    chatIdNotFound: '✗ Could not find message. Set chat ID manually in ~/.qlaude/telegram.json.',
+    done: '\n✓ Setup complete! Credentials saved to ~/.qlaude/telegram.json.\n',
+    skipped: 'Telegram can be configured later in ~/.qlaude/telegram.json.\n',
   },
 };
 
@@ -130,10 +128,15 @@ export async function detectChatId(token: string): Promise<string | null> {
 }
 
 /**
- * Update telegram.json with the given fields (merge with existing content).
+ * Update global ~/.qlaude/telegram.json with credentials (merge with existing content).
+ * Creates ~/.qlaude/ directory if it doesn't exist.
  */
-export function updateTelegramConfig(fields: Record<string, unknown>): void {
-  const configPath = join(process.cwd(), QLAUDE_DIR, 'telegram.json');
+export function updateGlobalTelegramConfig(fields: Record<string, unknown>): void {
+  const globalDir = join(homedir(), QLAUDE_DIR);
+  if (!existsSync(globalDir)) {
+    mkdirSync(globalDir, { recursive: true });
+  }
+  const configPath = join(globalDir, 'telegram.json');
   let existing: Record<string, unknown> = {};
   try {
     existing = JSON.parse(readFileSync(configPath, 'utf-8')) as Record<string, unknown>;
@@ -146,8 +149,23 @@ export function updateTelegramConfig(fields: Record<string, unknown>): void {
 }
 
 /**
+ * Update per-project .qlaude/telegram.json with the given fields (merge with existing content).
+ */
+export function updateProjectTelegramConfig(fields: Record<string, unknown>): void {
+  const configPath = join(process.cwd(), QLAUDE_DIR, 'telegram.json');
+  let existing: Record<string, unknown> = {};
+  try {
+    existing = JSON.parse(readFileSync(configPath, 'utf-8')) as Record<string, unknown>;
+  } catch {
+    // File may not exist or be invalid — start fresh
+  }
+  const merged = { ...existing, ...fields };
+  writeFileSync(configPath, JSON.stringify(merged, null, 2) + '\n', { encoding: 'utf-8', mode: 0o600 });
+}
+
+/**
  * Run the first-run setup wizard.
- * Collects language and optional Telegram configuration in memory.
+ * Collects optional Telegram configuration in memory.
  * Returns WizardResult on success, null if cancelled (Ctrl+C).
  * Does NOT write any files — caller is responsible for persisting results.
  */
@@ -165,27 +183,15 @@ export async function runSetupWizard(): Promise<WizardResult | null> {
   });
 
   try {
-    // Determine initial display language from system locale
-    const detectedLang = detectLanguage();
-    let lang: Language = detectedLang;
-    let msg = wizardMessages[lang];
+    // Use system locale to determine wizard language
+    const lang = detectLanguage();
+    const msg = wizardMessages[lang];
 
     console.log(msg.welcome);
 
-    // Step 1: Language selection
-    const langChoice = await prompt(rl, msg.langPrompt, detectedLang === 'ko' ? '2' : '1');
-    if (cancelled) return null;
+    const result: WizardResult = {};
 
-    if (langChoice === '2') {
-      lang = 'ko';
-    } else {
-      lang = 'en';
-    }
-    msg = wizardMessages[lang];
-
-    const result: WizardResult = { language: lang };
-
-    // Step 2: Telegram setup (optional)
+    // Step 1: Telegram setup (optional)
     const setupTelegram = await prompt(rl, msg.telegramAsk, 'N');
     if (cancelled) return null;
 
@@ -194,7 +200,7 @@ export async function runSetupWizard(): Promise<WizardResult | null> {
       return result;
     }
 
-    // Step 3: Bot token input + validation
+    // Step 2: Bot token input + validation
     let botUsername: string | null = null;
     let botToken = '';
 
@@ -222,7 +228,7 @@ export async function runSetupWizard(): Promise<WizardResult | null> {
 
     result.telegram = { enabled: true, botToken };
 
-    // Step 4: Chat ID detection — try existing updates first, then poll
+    // Step 3: Chat ID detection — try existing updates first, then poll
     console.log(msg.chatIdDetecting);
     let chatId = await detectChatId(botToken);
 

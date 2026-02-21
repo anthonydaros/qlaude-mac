@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { validateBotToken, detectChatId, updateTelegramConfig } from '../../src/utils/setup-wizard.js';
+import { validateBotToken, detectChatId, updateGlobalTelegramConfig, updateProjectTelegramConfig } from '../../src/utils/setup-wizard.js';
 
 // Mock fs
 vi.mock('fs', () => ({
@@ -23,7 +23,7 @@ vi.mock('../../src/utils/config.js', () => ({
   detectLanguage: () => 'en' as const,
 }));
 
-import { readFileSync, writeFileSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync } from 'fs';
 
 describe('setup-wizard helpers', () => {
   beforeEach(() => {
@@ -132,39 +132,67 @@ describe('setup-wizard helpers', () => {
     });
   });
 
-  describe('updateTelegramConfig', () => {
+  describe('updateGlobalTelegramConfig', () => {
     it('should merge fields with existing config', () => {
+      vi.mocked(existsSync).mockReturnValue(true);
       vi.mocked(readFileSync).mockReturnValue(JSON.stringify({
-        enabled: false,
         botToken: 'old',
-        language: 'en',
+        chatId: '123',
       }));
 
-      updateTelegramConfig({ botToken: 'new', enabled: true });
+      updateGlobalTelegramConfig({ botToken: 'new' });
 
       const call = vi.mocked(writeFileSync).mock.calls[0];
       const written = JSON.parse(call[1] as string);
       expect(written.botToken).toBe('new');
-      expect(written.enabled).toBe(true);
-      expect(written.language).toBe('en');
+      expect(written.chatId).toBe('123');
     });
 
     it('should handle missing config file gracefully', () => {
+      vi.mocked(existsSync).mockReturnValue(true);
       vi.mocked(readFileSync).mockImplementation(() => {
         throw new Error('ENOENT');
       });
 
-      updateTelegramConfig({ language: 'ko' });
+      updateGlobalTelegramConfig({ botToken: '123:ABC' });
 
       const call = vi.mocked(writeFileSync).mock.calls[0];
       const written = JSON.parse(call[1] as string);
-      expect(written.language).toBe('ko');
+      expect(written.botToken).toBe('123:ABC');
     });
 
-    it('should write to correct path', () => {
+    it('should write to home directory path', () => {
+      vi.mocked(existsSync).mockReturnValue(true);
       vi.mocked(readFileSync).mockReturnValue('{}');
 
-      updateTelegramConfig({ enabled: true });
+      updateGlobalTelegramConfig({ botToken: 'test' });
+
+      const call = vi.mocked(writeFileSync).mock.calls[0];
+      const filePath = call[0] as string;
+      expect(filePath).toContain('.qlaude');
+      expect(filePath).toContain('telegram.json');
+    });
+  });
+
+  describe('updateProjectTelegramConfig', () => {
+    it('should merge fields with existing config', () => {
+      vi.mocked(readFileSync).mockReturnValue(JSON.stringify({
+        enabled: false,
+        language: 'en',
+      }));
+
+      updateProjectTelegramConfig({ enabled: true });
+
+      const call = vi.mocked(writeFileSync).mock.calls[0];
+      const written = JSON.parse(call[1] as string);
+      expect(written.enabled).toBe(true);
+      expect(written.language).toBe('en');
+    });
+
+    it('should write to project directory path', () => {
+      vi.mocked(readFileSync).mockReturnValue('{}');
+
+      updateProjectTelegramConfig({ enabled: true });
 
       const call = vi.mocked(writeFileSync).mock.calls[0];
       const filePath = call[0] as string;

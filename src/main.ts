@@ -31,20 +31,23 @@ const qlaudeArgs = parseArgs();
 
 // Run setup wizard on first run, then create config files
 if (isFirstRun() && process.stdin.isTTY) {
-  const { runSetupWizard, updateTelegramConfig } = await import('./utils/setup-wizard.js');
+  const { runSetupWizard, updateGlobalTelegramConfig, updateProjectTelegramConfig } = await import('./utils/setup-wizard.js');
   const wizardResult = await runSetupWizard();
   if (wizardResult) {
     // Wizard completed — create config files and apply wizard choices
     ensureConfigDir();
-    const telegramFields: Record<string, unknown> = { language: wizardResult.language };
+    // Save credentials to global ~/.qlaude/telegram.json
     if (wizardResult.telegram) {
-      telegramFields.enabled = wizardResult.telegram.enabled;
-      telegramFields.botToken = wizardResult.telegram.botToken;
+      const globalFields: Record<string, unknown> = {
+        botToken: wizardResult.telegram.botToken,
+      };
       if (wizardResult.telegram.chatId) {
-        telegramFields.chatId = wizardResult.telegram.chatId;
+        globalFields.chatId = wizardResult.telegram.chatId;
       }
+      updateGlobalTelegramConfig(globalFields);
+      // Enable telegram in the project config
+      updateProjectTelegramConfig({ enabled: true });
     }
-    updateTelegramConfig(telegramFields);
   } else {
     // Wizard cancelled — exit without creating config, re-runs next time
     process.exit(0);
