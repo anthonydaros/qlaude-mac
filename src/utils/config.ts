@@ -135,7 +135,7 @@ function warnLegacyConfig(): void {
  * Check if this is the first run (no .qlaude/ directory in CWD).
  */
 export function isFirstRun(): boolean {
-  return !existsSync(join(process.cwd(), QLAUDE_DIR));
+  return !existsSync(join(homedir(), QLAUDE_DIR, TELEGRAM_FILE));
 }
 
 /**
