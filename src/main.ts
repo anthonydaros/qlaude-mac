@@ -3,6 +3,7 @@
 import path, { isAbsolute } from 'path';
 import { readFileSync, writeFileSync } from 'fs';
 import { PtyWrapper } from './pty-wrapper.js';
+import { PtyError } from './types/errors.js';
 import { logger, reconfigureLogger } from './utils/logger.js';
 import { parseArgs } from './utils/cli-args.js';
 import { createCleanup } from './utils/cleanup.js';
@@ -634,6 +635,10 @@ async function main(): Promise<void> {
     ptyWrapper.spawn(claudeArgs);
     // Scroll region is set on first PTY data event (see ptyWrapper.on('data') handler)
   } catch (error) {
+    const msg = error instanceof PtyError
+      ? error.getUserFriendlyMessage()
+      : 'Failed to start Claude Code. Please check if it is installed.';
+    process.stderr.write(`\nqlaude: ${msg}\n`);
     logger.error({ error }, 'Failed to spawn Claude Code');
     cleanup();
     process.exit(1);

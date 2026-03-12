@@ -3,6 +3,8 @@ import { EventEmitter } from 'events';
 import { PtyWrapper } from '../../src/pty-wrapper.js';
 import * as pty from 'node-pty';
 import { logger } from '../../src/utils/logger.js';
+import * as ptyIntegrity from '../../src/utils/pty-integrity.js';
+import { ErrorCode } from '../../src/types/errors.js';
 
 // Mock logger
 vi.mock('../../src/utils/logger.js', () => ({
@@ -27,6 +29,11 @@ vi.mock('../../src/utils/cli-args.js', () => ({
   })),
 }));
 
+// Mock pty-integrity (default: pass)
+vi.mock('../../src/utils/pty-integrity.js', () => ({
+  ensureSpawnHelper: vi.fn(),
+}));
+
 describe('PtyWrapper', () => {
   let ptyWrapper: PtyWrapper;
   let mockPtyInstance: {
@@ -40,6 +47,8 @@ describe('PtyWrapper', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // Reset ensureSpawnHelper to a no-op so it doesn't affect other tests
+    vi.mocked(ptyIntegrity.ensureSpawnHelper).mockImplementation(() => {});
     exitCallback = null;
 
     // Create mock PTY instance
@@ -187,6 +196,20 @@ describe('PtyWrapper', () => {
       // Then
       expect(mockPtyInstance.kill).toHaveBeenCalled();
       expect(ptyWrapper.isRunning()).toBe(false);
+    });
+  });
+
+  describe('spawn integrity check', () => {
+    it('throws PtyError with E101 when ensureSpawnHelper fails', () => {
+      vi.mocked(ptyIntegrity.ensureSpawnHelper).mockImplementation(() => {
+        throw new Error('spawn-helper not found');
+      });
+
+      expect(() => ptyWrapper.spawn(['--no-update'])).toThrowError(
+        expect.objectContaining({
+          code: ErrorCode.PTY_SPAWN_FAILED,
+        })
+      );
     });
   });
 

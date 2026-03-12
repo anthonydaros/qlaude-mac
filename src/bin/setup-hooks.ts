@@ -11,8 +11,18 @@
 
 import { installHook, isHookInstalled, getClaudeSettingsPath } from '../utils/hook-setup.js';
 import { ensureConfigDir } from '../utils/config.js';
+import { ensureSpawnHelper } from '../utils/pty-integrity.js';
 
 function main(): void {
+  // Verify node-pty spawn-helper has executable permission (node-pty@1.1.0 ships without +x)
+  try {
+    ensureSpawnHelper();
+    console.log('qlaude: node-pty spawn-helper verified');
+  } catch (err) {
+    console.warn('qlaude: Warning: Could not verify node-pty spawn-helper:', (err as Error).message);
+    console.warn('qlaude: PTY may fail at runtime. Try: chmod +x node_modules/node-pty/prebuilds/darwin-arm64/spawn-helper');
+  }
+
   console.log('qlaude: Setting up Claude Code hooks...');
 
   // Ensure .qlaude config directory exists

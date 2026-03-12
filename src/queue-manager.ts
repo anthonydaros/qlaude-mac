@@ -350,6 +350,26 @@ export class QueueManager extends (EventEmitter as new () => EventEmitter & Type
   }
 
   /**
+   * Build a QueueItem from a prompt and options. Shared by addItem and prependItem.
+   */
+  private buildQueueItem(prompt: string, options: AddItemOptions): QueueItem {
+    const modelName = options.modelName?.trim() || undefined;
+    const delayMs = options.delayMs && options.delayMs > 0 ? options.delayMs : undefined;
+    return {
+      prompt,
+      isNewSession: options.isNewSession ?? false,
+      isBreakpoint: options.isBreakpoint,
+      labelSession: options.labelSession,
+      resumeSessionId: options.resumeSessionId,
+      loadSessionLabel: options.loadSessionLabel,
+      isMultiline: options.isMultiline,
+      modelName,
+      delayMs,
+      addedAt: new Date(),
+    };
+  }
+
+  /**
    * Emit a queue event
    */
   private emitEvent(type: QueueEvent['type'], item?: QueueItem): void {
@@ -376,20 +396,7 @@ export class QueueManager extends (EventEmitter as new () => EventEmitter & Type
         ? { isNewSession: optionsOrIsNewSession }
         : optionsOrIsNewSession;
 
-      const modelName = options.modelName?.trim() || undefined;
-      const delayMs = options.delayMs && options.delayMs > 0 ? options.delayMs : undefined;
-      const item: QueueItem = {
-        prompt,
-        isNewSession: options.isNewSession ?? false,
-        isBreakpoint: options.isBreakpoint,
-        labelSession: options.labelSession,
-        resumeSessionId: options.resumeSessionId,
-        loadSessionLabel: options.loadSessionLabel,
-        isMultiline: options.isMultiline,
-        modelName,
-        delayMs,
-        addedAt: new Date(),
-      };
+      const item = this.buildQueueItem(prompt, options);
 
       this.items.push(item);
       await this.saveToFile();
@@ -414,20 +421,7 @@ export class QueueManager extends (EventEmitter as new () => EventEmitter & Type
     return this.runExclusive(async () => {
       await this.loadFromFile();
 
-      const modelName = options.modelName?.trim() || undefined;
-      const delayMs = options.delayMs && options.delayMs > 0 ? options.delayMs : undefined;
-      const item: QueueItem = {
-        prompt,
-        isNewSession: options.isNewSession ?? false,
-        isBreakpoint: options.isBreakpoint,
-        labelSession: options.labelSession,
-        resumeSessionId: options.resumeSessionId,
-        loadSessionLabel: options.loadSessionLabel,
-        isMultiline: options.isMultiline,
-        modelName,
-        delayMs,
-        addedAt: new Date(),
-      };
+      const item = this.buildQueueItem(prompt, options);
 
       this.items.unshift(item);
       await this.saveToFile();

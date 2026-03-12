@@ -13,22 +13,15 @@
  * Output: Writes session_id to .qlaude/session in current directory
  */
 
-import { resolve, join } from 'path';
+import { resolve } from 'path';
 import { existsSync } from 'fs';
 import { writeSessionId } from '../utils/hook-setup.js';
+import { isValidSessionId } from '../utils/session-id.js';
 
 interface SessionStartInput {
   session_id: string;
   cwd?: string;
   [key: string]: unknown;
-}
-
-/**
- * Validate that a session_id contains only safe characters (alphanumeric, hyphens, underscores)
- * to prevent path traversal via crafted session IDs.
- */
-function isValidSessionId(sessionId: string): boolean {
-  return /^[a-zA-Z0-9_-]+$/.test(sessionId);
 }
 
 /**

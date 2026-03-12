@@ -507,101 +507,83 @@ export class TelegramNotifier extends EventEmitter {
   }
 
   /**
-   * Handle /send command
-   * Formats: /send text, /send instanceId text
+   * Shared handler for /send and /key commands.
+   * Both commands parse an optional instance ID prefix and emit a text event.
    */
-  private async handleSendCommand(message: TelegramMessage, args?: string): Promise<void> {
+  private async handleInputCommand(
+    message: TelegramMessage,
+    args: string | undefined,
+    config: {
+      event: 'send_text' | 'key_input';
+      usageKey: string;
+      sentKey: string;
+      sentInstanceKey: string;
+      logLabel: string;
+    }
+  ): Promise<void> {
     if (!args || args.trim().length === 0) {
-      await this.replyToMessage(
-        message.chat.id,
-        message.message_id,
-        t('cmd.send_usage')
-      );
+      await this.replyToMessage(message.chat.id, message.message_id, t(config.usageKey));
       return;
     }
 
     const trimmedArgs = args.trim();
-
-    // Check if first word is an instance ID (contains colon like "hostname:pid")
     const parts = trimmedArgs.split(/\s+/);
+
     if (parts.length >= 2 && parts[0].includes(':')) {
-      // First part might be instance ID
       const potentialInstanceId = parts[0];
       if (potentialInstanceId !== this.instanceId) {
         logger.debug(
           { targetInstanceId: potentialInstanceId, myInstanceId: this.instanceId },
-          'Ignoring /send for different instance'
+          `Ignoring ${config.logLabel} for different instance`
         );
         return;
       }
-      // Rest is the text to send
       const textToSend = parts.slice(1).join(' ');
-      logger.info({ text: textToSend }, 'Telegram /send command received');
-      this.emit('send_text', textToSend);
+      logger.info({ text: textToSend }, `Telegram ${config.logLabel} command received`);
+      this.emit(config.event, textToSend);
       await this.replyToMessage(
         message.chat.id,
         message.message_id,
-        t('cmd.sent',{ text: textToSend.length > 30 ? textToSend.slice(0, 30) + '...' : textToSend })
+        t(config.sentKey, { text: textToSend.length > 30 ? textToSend.slice(0, 30) + '...' : textToSend })
       );
     } else {
-      // No instance ID, send to all instances (or just this one)
-      logger.info({ text: trimmedArgs }, 'Telegram /send command received');
-      this.emit('send_text', trimmedArgs);
+      logger.info({ text: trimmedArgs }, `Telegram ${config.logLabel} command received`);
+      this.emit(config.event, trimmedArgs);
       await this.replyToMessage(
         message.chat.id,
         message.message_id,
-        t('cmd.sent_instance',{ instanceId: this.instanceId, text: trimmedArgs.length > 30 ? trimmedArgs.slice(0, 30) + '...' : trimmedArgs })
+        t(config.sentInstanceKey, {
+          instanceId: this.instanceId,
+          text: trimmedArgs.length > 30 ? trimmedArgs.slice(0, 30) + '...' : trimmedArgs,
+        })
       );
     }
   }
 
   /**
-   * Handle /key command (input without Enter)
-   * Formats: /key text, /key instanceId text
+   * Handle /send command: /send text or /send instanceId text (with Enter)
+   */
+  private async handleSendCommand(message: TelegramMessage, args?: string): Promise<void> {
+    return this.handleInputCommand(message, args, {
+      event: 'send_text',
+      usageKey: 'cmd.send_usage',
+      sentKey: 'cmd.sent',
+      sentInstanceKey: 'cmd.sent_instance',
+      logLabel: '/send',
+    });
+  }
+
+  /**
+   * Handle /key command: /key text or /key instanceId text (without Enter)
    */
   private async handleKeyCommand(message: TelegramMessage, args?: string): Promise<void> {
-    if (!args || args.trim().length === 0) {
-      await this.replyToMessage(
-        message.chat.id,
-        message.message_id,
-        t('cmd.key_usage')
-      );
-      return;
-    }
-
-    const trimmedArgs = args.trim();
-
-    // Check if first word is an instance ID (contains colon like "hostname:pid")
-    const parts = trimmedArgs.split(/\s+/);
-    if (parts.length >= 2 && parts[0].includes(':')) {
-      // First part might be instance ID
-      const potentialInstanceId = parts[0];
-      if (potentialInstanceId !== this.instanceId) {
-        logger.debug(
-          { targetInstanceId: potentialInstanceId, myInstanceId: this.instanceId },
-          'Ignoring /key for different instance'
-        );
-        return;
-      }
-      // Rest is the text to send
-      const textToSend = parts.slice(1).join(' ');
-      logger.info({ text: textToSend }, 'Telegram /key command received');
-      this.emit('key_input', textToSend);
-      await this.replyToMessage(
-        message.chat.id,
-        message.message_id,
-        t('cmd.key_sent',{ text: textToSend.length > 30 ? textToSend.slice(0, 30) + '...' : textToSend })
-      );
-    } else {
-      // No instance ID, send to all instances (or just this one)
-      logger.info({ text: trimmedArgs }, 'Telegram /key command received');
-      this.emit('key_input', trimmedArgs);
-      await this.replyToMessage(
-        message.chat.id,
-        message.message_id,
-        t('cmd.key_sent_instance',{ instanceId: this.instanceId, text: trimmedArgs.length > 30 ? trimmedArgs.slice(0, 30) + '...' : trimmedArgs })
-      );
-    }
+    return this.handleInputCommand(message, args, {
+      event: 'key_input',
+      usageKey: 'cmd.key_usage',
+      sentKey: 'cmd.key_sent',
+      sentInstanceKey: 'cmd.key_sent_instance',
+      logLabel: '/key',
+    });
   }
 
   /**

@@ -8,6 +8,7 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } from 'fs';
 import { join, dirname } from 'path';
 import { homedir } from 'os';
+import { isValidSessionId } from './session-id.js';
 
 /**
  * Hook entry in the new Claude Code format
@@ -233,7 +234,7 @@ export function readSessionId(cwd: string = process.cwd()): string | null {
  */
 export function writeSessionId(sessionId: string, cwd: string = process.cwd()): void {
   // Validate session ID to prevent writing arbitrary content
-  if (!/^[a-zA-Z0-9_-]+$/.test(sessionId)) {
+  if (!isValidSessionId(sessionId)) {
     throw new Error('Invalid session ID format');
   }
 

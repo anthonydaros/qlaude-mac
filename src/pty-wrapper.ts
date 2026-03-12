@@ -5,6 +5,7 @@ import { logger } from './utils/logger.js';
 import type { PtyWrapperEvents } from './types/pty.js';
 import { buildPtySpawnArgs } from './utils/cli-args.js';
 import { PtyError, ErrorCode } from './types/errors.js';
+import { ensureSpawnHelper } from './utils/pty-integrity.js';
 
 export class PtyWrapper extends EventEmitter {
   private pty: IPty | null = null;
@@ -29,6 +30,17 @@ export class PtyWrapper extends EventEmitter {
     const rows = process.stdout.rows || 30;
 
     const { shell, args } = buildPtySpawnArgs(claudeArgs);
+
+    try {
+      ensureSpawnHelper();
+    } catch (error) {
+      throw new PtyError(
+        `node-pty spawn-helper not executable: ${(error as Error).message}`,
+        ErrorCode.PTY_SPAWN_FAILED,
+        false,
+        error as Error
+      );
+    }
 
     try {
       // Normalize TERM: use xterm-256color if unset or set to dumb

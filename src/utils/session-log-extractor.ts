@@ -9,15 +9,7 @@ import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import { logger } from './logger.js';
-
-/**
- * Validate that a session ID contains only safe characters.
- * Claude session IDs are UUIDs (alphanumeric + hyphens).
- * This prevents path traversal via crafted session IDs like "../../etc/passwd".
- */
-function isValidSessionId(sessionId: string): boolean {
-  return /^[a-zA-Z0-9_-]+$/.test(sessionId);
-}
+import { isValidSessionId } from './session-id.js';
 
 interface SessionIndex {
   version: number;
