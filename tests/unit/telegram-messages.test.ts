@@ -8,59 +8,49 @@ describe('telegram-messages', () => {
   });
 
   describe('t() without overrides', () => {
-    it('should return Korean message by default', () => {
-      expect(t('notify.selection_prompt', 'ko')).toBe('입력 필요');
-    });
-
     it('should return English message', () => {
-      expect(t('notify.selection_prompt', 'en')).toBe('Input Required');
-    });
-
-    it('should fall back to Korean for missing English key', () => {
-      // Both languages have all keys, but fallback logic is ko → raw key
-      expect(t('nonexistent.key', 'en')).toBe('nonexistent.key');
+      expect(t('notify.selection_prompt')).toBe('Input Required');
     });
 
     it('should return raw key for unknown keys', () => {
-      expect(t('unknown.key', 'ko')).toBe('unknown.key');
+      expect(t('unknown.key')).toBe('unknown.key');
     });
 
     it('should interpolate parameters', () => {
-      const result = t('queue.items', 'ko', { count: 5 });
-      expect(result).toBe('5개 항목');
+      const result = t('queue.items', { count: 3 });
+      expect(result).toBe('3 items');
     });
 
-    it('should interpolate parameters in English', () => {
-      const result = t('queue.items', 'en', { count: 3 });
-      expect(result).toBe('3 items');
+    it('should interpolate multiple parameters', () => {
+      const result = t('cmd.paused_broadcast', { instanceId: 'host:123' });
+      expect(result).toBe('⏸️ Queue paused (host:123)');
     });
   });
 
   describe('t() with overrides', () => {
     it('should use override over built-in message', () => {
       setMessageOverrides({
-        'notify.selection_prompt': '커스텀 제목',
+        'notify.selection_prompt': 'Custom Title',
       });
 
-      expect(t('notify.selection_prompt', 'ko')).toBe('커스텀 제목');
-      expect(t('notify.selection_prompt', 'en')).toBe('커스텀 제목');
+      expect(t('notify.selection_prompt')).toBe('Custom Title');
     });
 
     it('should fall back to built-in for non-overridden keys', () => {
       setMessageOverrides({
-        'notify.selection_prompt': '커스텀',
+        'notify.selection_prompt': 'Custom',
       });
 
       // Non-overridden key should still return built-in
-      expect(t('notify.interrupted', 'ko')).toBe('작업 중단됨');
+      expect(t('notify.interrupted')).toBe('Interrupted');
     });
 
     it('should support parameter interpolation in overrides', () => {
       setMessageOverrides({
-        'queue.items': '대기열: {count}건 남음',
+        'queue.items': 'Queue: {count} remaining',
       });
 
-      expect(t('queue.items', 'ko', { count: 7 })).toBe('대기열: 7건 남음');
+      expect(t('queue.items', { count: 7 })).toBe('Queue: 7 remaining');
     });
 
     it('should allow overriding with empty string', () => {
@@ -69,17 +59,17 @@ describe('telegram-messages', () => {
       });
 
       // Empty string is a valid override (disables the message text)
-      expect(t('notify.selection_prompt', 'ko')).toBe('');
+      expect(t('notify.selection_prompt')).toBe('');
     });
 
     it('should reset overrides when called with empty object', () => {
       setMessageOverrides({
-        'notify.selection_prompt': '커스텀',
+        'notify.selection_prompt': 'Custom',
       });
-      expect(t('notify.selection_prompt', 'ko')).toBe('커스텀');
+      expect(t('notify.selection_prompt')).toBe('Custom');
 
       setMessageOverrides({});
-      expect(t('notify.selection_prompt', 'ko')).toBe('입력 필요');
+      expect(t('notify.selection_prompt')).toBe('Input Required');
     });
   });
 });

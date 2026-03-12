@@ -20,7 +20,6 @@ vi.mock('../../src/utils/logger.js', () => ({
 
 vi.mock('../../src/utils/config.js', () => ({
   QLAUDE_DIR: '.qlaude',
-  detectLanguage: () => 'en' as const,
 }));
 
 import { existsSync, readFileSync, writeFileSync } from 'fs';

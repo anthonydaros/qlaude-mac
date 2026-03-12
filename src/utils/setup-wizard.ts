@@ -1,7 +1,6 @@
 /**
  * First-run setup wizard for qlaude.
  * Interactive prompts for Telegram configuration.
- * Language is auto-detected from system locale.
  * Does NOT write any files — returns collected data for the caller to persist.
  */
 
@@ -9,8 +8,7 @@ import { createInterface, type Interface as ReadlineInterface } from 'readline';
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
-import { QLAUDE_DIR, detectLanguage } from './config.js';
-import type { Language } from './telegram-messages.js';
+import { QLAUDE_DIR } from './config.js';
 
 export interface WizardResult {
   telegram?: {
@@ -35,35 +33,19 @@ interface WizardMessages {
   skipped: string;
 }
 
-const wizardMessages: Record<Language, WizardMessages> = {
-  ko: {
-    welcome: '\n=== qlaude 설정 ===\n',
-    telegramAsk: '텔레그램 알림을 설정하시겠습니까? (y/N)',
-    tokenPrompt: '봇 토큰',
-    tokenValid: '✓ 봇: @{name}',
-    tokenInvalid: '✗ 유효하지 않은 토큰',
-    tokenRetry: '다시 입력하시겠습니까? (y/N)',
-    chatIdDetecting: 'Chat ID 감지 중...',
-    chatIdPrompt: '텔레그램 앱에서 @{name} 봇에게 /start 또는 아무 메시지를 보내세요\n  자동 감지 대기 중... (Ctrl+C로 취소)',
-    chatIdFound: '✓ Chat ID: {id}',
-    chatIdNotFound: '✗ 메시지를 찾지 못했습니다. 나중에 ~/.qlaude/telegram.json에서 설정해주세요.',
-    done: '\n✓ 설정 완료! 자격 증명은 ~/.qlaude/telegram.json에 저장됩니다.\n',
-    skipped: '텔레그램은 나중에 ~/.qlaude/telegram.json에서 설정할 수 있습니다.\n',
-  },
-  en: {
-    welcome: '\n=== qlaude Setup ===\n',
-    telegramAsk: 'Setup Telegram notifications? (y/N)',
-    tokenPrompt: 'Bot token',
-    tokenValid: '✓ Bot: @{name}',
-    tokenInvalid: '✗ Invalid token',
-    tokenRetry: 'Try again? (y/N)',
-    chatIdDetecting: 'Detecting Chat ID...',
-    chatIdPrompt: 'Open Telegram and send /start or any message to @{name}\n  Waiting for message... (Ctrl+C to cancel)',
-    chatIdFound: '✓ Chat ID: {id}',
-    chatIdNotFound: '✗ Could not find message. Set chat ID manually in ~/.qlaude/telegram.json.',
-    done: '\n✓ Setup complete! Credentials saved to ~/.qlaude/telegram.json.\n',
-    skipped: 'Telegram can be configured later in ~/.qlaude/telegram.json.\n',
-  },
+const wizardMessages: WizardMessages = {
+  welcome: '\n=== qlaude Setup ===\n',
+  telegramAsk: 'Setup Telegram notifications? (y/N)',
+  tokenPrompt: 'Bot token',
+  tokenValid: '✓ Bot: @{name}',
+  tokenInvalid: '✗ Invalid token',
+  tokenRetry: 'Try again? (y/N)',
+  chatIdDetecting: 'Detecting Chat ID...',
+  chatIdPrompt: 'Open Telegram and send /start or any message to @{name}\n  Waiting for message... (Ctrl+C to cancel)',
+  chatIdFound: '✓ Chat ID: {id}',
+  chatIdNotFound: '✗ Could not find message. Set chat ID manually in ~/.qlaude/telegram.json.',
+  done: '\n✓ Setup complete! Credentials saved to ~/.qlaude/telegram.json.\n',
+  skipped: 'Telegram can be configured later in ~/.qlaude/telegram.json.\n',
 };
 
 /**
@@ -183,9 +165,7 @@ export async function runSetupWizard(): Promise<WizardResult | null> {
   });
 
   try {
-    // Use system locale to determine wizard language
-    const lang = detectLanguage();
-    const msg = wizardMessages[lang];
+    const msg = wizardMessages;
 
     console.log(msg.welcome);
 

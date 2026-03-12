@@ -347,33 +347,4 @@ export class ConversationLogger {
     return this.currentSessionId;
   }
 
-  // Legacy methods (no-op, kept for compatibility)
-  snapshotSessionIds(): void {
-    // No longer needed with hook-based approach
-  }
-
-  detectNewSession(): void {
-    // Use refreshSessionId() instead
-    this.refreshSessionId();
-  }
-
-  trackExecutedPrompt(_prompt: string): void {
-    // No longer needed with hook-based approach
-  }
-
-  startCapture(_prompt: string): void {
-    // No-op: JSONL extraction doesn't need real-time capture
-  }
-
-  appendData(_data: string): void {
-    // No-op: JSONL extraction doesn't need PTY data
-  }
-
-  endCapture(): void {
-    // No-op: JSONL extraction doesn't need capture end
-  }
-
-  cancelCapture(): void {
-    // No-op: JSONL extraction doesn't need capture cancel
-  }
 }

@@ -36,7 +36,6 @@ export type QueueEventType =
   | 'item_removed'
   | 'item_executed'
   | 'queue_reloaded'
-  | 'queue_cleared'
   | 'file_read_error'
   | 'file_write_error'
   | 'file_recovered';

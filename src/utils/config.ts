@@ -7,7 +7,6 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from '
 import { join } from 'path';
 import { homedir } from 'os';
 import { logger } from './logger.js';
-import { messages as defaultMessages, type Language } from './telegram-messages.js';
 import type { QlaudeConfig, ConversationLogConfig, TelegramConfig, PatternsConfig, PatternCategoryConfig, PatternEntry } from '../types/config.js';
 import { DEFAULT_CONFIG, DEFAULT_CONVERSATION_LOG_CONFIG, DEFAULT_TELEGRAM_CONFIG } from '../types/config.js';
 
@@ -16,7 +15,6 @@ export const QLAUDE_DIR = '.qlaude';
 const CONFIG_FILE = 'config.json';
 const PATTERNS_FILE = 'patterns.json';
 const TELEGRAM_FILE = 'telegram.json';
-const MESSAGES_DIR = 'messages';
 const LEGACY_CONFIG_FILENAME = '.qlauderc.json';
 
 /**
@@ -70,45 +68,11 @@ function migratePatternsFile(qlaudeDir: string): void {
 }
 
 /**
- * Detect language from system locale (e.g., ko-KR → ko, en-US → en)
- */
-export function detectLanguage(): Language {
-  try {
-    const locale = Intl.DateTimeFormat().resolvedOptions().locale;
-    return locale.startsWith('ko') ? 'ko' : 'en';
-  } catch {
-    return 'en';
-  }
-}
-
-/**
  * Generate telegram config template (telegram.json)
  * Per-project settings only — credentials come from ~/.qlaude/telegram.json
  */
 function generateTelegramTemplate(): string {
-  const language = detectLanguage();
-  const template = {
-    enabled: false,
-    language,
-  };
-  return JSON.stringify(template, null, 2) + '\n';
-}
-
-/**
- * Create message files for all supported languages in .qlaude/messages/
- */
-function ensureMessageFiles(qlaudeDir: string): void {
-  const messagesDir = join(qlaudeDir, MESSAGES_DIR);
-  if (!existsSync(messagesDir)) {
-    mkdirSync(messagesDir, { recursive: true });
-  }
-  for (const lang of ['ko', 'en'] as Language[]) {
-    const filePath = join(messagesDir, `${lang}.json`);
-    if (!existsSync(filePath)) {
-      writeFileSync(filePath, JSON.stringify(defaultMessages[lang], null, 2) + '\n', { encoding: 'utf-8', mode: 0o600 });
-      logger.info({ path: filePath }, `Created message file: ${lang}.json`);
-    }
-  }
+  return JSON.stringify({ enabled: false }, null, 2) + '\n';
 }
 
 /**
@@ -132,7 +96,7 @@ function warnLegacyConfig(): void {
 }
 
 /**
- * Check if this is the first run (no .qlaude/ directory in CWD).
+ * Check if this is the first run (no ~/.qlaude/telegram.json exists).
  */
 export function isFirstRun(): boolean {
   return !existsSync(join(homedir(), QLAUDE_DIR, TELEGRAM_FILE));
@@ -167,9 +131,6 @@ export function ensureConfigDir(): boolean {
         created = true;
       }
     }
-
-    // Create message files for all supported languages
-    ensureMessageFiles(cwdDir);
 
     if (created) {
       logger.info({ path: cwdDir }, 'Config files created in .qlaude directory');
@@ -234,18 +195,6 @@ export function loadConfig(): typeof DEFAULT_CONFIG & Pick<QlaudeConfig, 'patter
     ...projectTelegram,
   };
 
-  // Load language-specific message file (messages/{language}.json)
-  const lang = telegram.language ?? DEFAULT_TELEGRAM_CONFIG.language;
-  const msgFileRaw = loadJsonFile(join(qlaudeDir, MESSAGES_DIR, `${lang}.json`));
-  if (msgFileRaw && typeof msgFileRaw === 'object' && msgFileRaw !== null) {
-    const fileMessages: Record<string, string> = {};
-    for (const [k, v] of Object.entries(msgFileRaw as Record<string, unknown>)) {
-      if (typeof v === 'string') fileMessages[k] = v;
-    }
-    // Message file is the base; telegram.json messages override on top
-    telegram.messages = { ...fileMessages, ...telegram.messages };
-  }
-
   return mergeAllWithDefaults(common, patterns, telegram);
 }
 
@@ -301,6 +250,7 @@ function validateConversationLogConfig(
 
 /**
  * Validate telegram config (telegram.json is the top-level TelegramConfig)
+ * Silently ignores legacy fields like `language` and `messages` for backward compat.
  */
 function validateTelegramConfig(
   obj: unknown
@@ -330,29 +280,12 @@ function validateTelegramConfig(
     logger.warn({ value: input.chatId }, 'Invalid telegram.chatId value, ignoring');
   }
 
-  if (typeof input.language === 'string' && ['ko', 'en'].includes(input.language)) {
-    config.language = input.language as 'ko' | 'en';
-  } else if (input.language !== undefined) {
-    logger.warn({ value: input.language }, 'Invalid telegram.language value, ignoring');
-  }
+  // Silently ignore legacy `language` field (backward compat with old configs)
 
   if (typeof input.confirmDelayMs === 'number' && input.confirmDelayMs >= 0) {
     config.confirmDelayMs = input.confirmDelayMs;
   } else if (input.confirmDelayMs !== undefined) {
     logger.warn({ value: input.confirmDelayMs }, 'Invalid telegram.confirmDelayMs value, ignoring');
-  }
-
-  // Validate messages: Record<string, string>
-  if (input.messages !== undefined) {
-    if (typeof input.messages === 'object' && input.messages !== null) {
-      const msgs: Record<string, string> = {};
-      for (const [k, v] of Object.entries(input.messages as Record<string, unknown>)) {
-        if (typeof v === 'string') msgs[k] = v;
-      }
-      if (Object.keys(msgs).length > 0) config.messages = msgs;
-    } else {
-      logger.warn({ value: input.messages }, 'Invalid telegram.messages value, ignoring');
-    }
   }
 
   // Validate templates: Record<string, string>

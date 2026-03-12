@@ -23,25 +23,12 @@ export interface TelegramConfig {
   chatId: string;
 
   /**
-   * Language for Telegram messages
-   * @default 'ko'
-   */
-  language: 'ko' | 'en';
-
-  /**
    * Delay (ms) before confirming Telegram updates, allowing multi-instance polling.
    * Higher values give more instances time to see each update.
    * Set to 0 for single-instance mode (original behavior).
    * @default 30000
    */
   confirmDelayMs?: number;
-
-  /**
-   * Override individual message strings (t() catalog keys).
-   * Keys match telegram-messages.ts catalog, e.g. "notify.selection_prompt".
-   * Supports {param} interpolation.
-   */
-  messages?: Record<string, string>;
 
   /**
    * Per-notification-type layout templates.
@@ -224,7 +211,6 @@ export const DEFAULT_TELEGRAM_CONFIG: TelegramConfig = {
   enabled: false,
   botToken: '',
   chatId: '',
-  language: 'en',
   confirmDelayMs: 30000,
 };
 

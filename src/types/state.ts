@@ -51,28 +51,8 @@ export interface ClaudeCodeState {
 }
 
 /**
- * State pattern definition for detection
- */
-export interface StatePattern {
-  state: StateType;
-  patterns: RegExp[];
-  priority: number;
-}
-
-/**
- * Safe mode state for state detection failures
- */
-export interface SafeModeState {
-  enabled: boolean;
-  consecutiveFailures: number;
-  enteredAt?: number;
-}
-
-/**
  * State detector event types
  */
 export interface StateDetectorEvents {
   state_change: (state: ClaudeCodeState) => void;
-  safe_mode: (state: SafeModeState) => void;
-  safe_mode_exit: () => void;
 }

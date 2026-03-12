@@ -128,11 +128,6 @@ describe('Default State Patterns', () => {
       expect(test('Custom input')).toBe(true);
     });
 
-    it('should match Korean "직접입력" when bounded by ASCII word chars', () => {
-      // \b requires \w char adjacent to Korean chars on both sides
-      expect(test('a직접입력b')).toBe(true);
-    });
-
     it('should match trailing dots', () => {
       expect(test('Other...')).toBe(true);
     });

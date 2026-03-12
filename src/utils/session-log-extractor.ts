@@ -6,7 +6,7 @@
  */
 
 import { readFileSync, existsSync } from 'fs';
-import { join, basename } from 'path';
+import { join } from 'path';
 import { homedir } from 'os';
 import { logger } from './logger.js';
 
@@ -72,13 +72,10 @@ function getClaudeProjectsDir(): string {
 
 /**
  * Convert current working directory to Claude's project folder name
- * e.g., "D:\repo\qlaude" -> "d--repo-qlaude"
+ * e.g., "/Users/user/repo" -> "-users-user-repo"
  */
 function cwdToProjectFolder(cwd: string): string {
-  // Normalize path separators and convert to lowercase
   return cwd
-    .replace(/\\/g, '-')
-    .replace(/:/g, '-')
     .replace(/^-+/, '')
     .toLowerCase()
     .replace(/-+/g, '-');
@@ -99,7 +96,6 @@ function findProjectFolder(cwd: string): string | null {
   const variations = [
     expectedName,
     expectedName.charAt(0).toUpperCase() + expectedName.slice(1),
-    cwd.replace(/\\/g, '-').replace(/:/g, '-').replace(/^-+/, ''),
   ];
 
   for (const variation of variations) {

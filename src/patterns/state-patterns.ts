@@ -50,8 +50,6 @@ export const DEFAULT_TEXT_INPUT_KEYWORDS: RegExp[] = [
   /\bcustom\b/i,
   /\bspecify\b/i,
   /\bother\b/i,
-  /\b직접\s*입력\b/,   // Korean: "direct input"
-  /\b기타\b/,           // Korean: "other"
   /\.{2,}$/,            // Ends with "..." or ".."
 ];
 

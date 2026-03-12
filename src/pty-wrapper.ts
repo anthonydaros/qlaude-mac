@@ -31,8 +31,8 @@ export class PtyWrapper extends EventEmitter {
     const { shell, args } = buildPtySpawnArgs(claudeArgs);
 
     try {
-      // Use actual terminal type from environment, fallback to xterm-256color
-      const termName = process.env.TERM || 'xterm-256color';
+      // Normalize TERM: use xterm-256color if unset or set to dumb
+      const termName = (!process.env.TERM || process.env.TERM === 'dumb') ? 'xterm-256color' : process.env.TERM;
       logger.debug({ termName, cols, rows }, 'Spawning PTY with terminal type');
 
       this.pty = pty.spawn(shell, args, {
@@ -41,7 +41,6 @@ export class PtyWrapper extends EventEmitter {
         rows,
         cwd: process.cwd(),
         env: process.env as Record<string, string>,
-        // Let node-pty use default PTY (ConPTY on Windows 10+)
       });
 
       this.pty.onData((data: string) => {

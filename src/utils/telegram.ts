@@ -6,7 +6,6 @@
 import { EventEmitter } from 'events';
 import { logger } from './logger.js';
 import { t } from './telegram-messages.js';
-import type { Language } from './telegram-messages.js';
 import type { TelegramConfig } from '../types/config.js';
 import type { ParsedOption } from '../types/state.js';
 import path from 'path';
@@ -99,7 +98,6 @@ export interface TelegramNotifierEvents {
  */
 export class TelegramNotifier extends EventEmitter {
   private config: TelegramConfig;
-  private lang: Language;
   private projectName: string;
   private hostname: string;
   private ipAddress: string;
@@ -140,7 +138,6 @@ export class TelegramNotifier extends EventEmitter {
   constructor(config: TelegramConfig) {
     super();
     this.config = config;
-    this.lang = config.language ?? 'ko';
     this.confirmDelayMs = config.confirmDelayMs ?? 30000;
     this.templates = config.templates ?? {};
     this.projectName = path.basename(process.cwd());
@@ -195,13 +192,6 @@ export class TelegramNotifier extends EventEmitter {
    */
   getInstanceId(): string {
     return this.instanceId;
-  }
-
-  /**
-   * Get the configured language
-   */
-  getLanguage(): Language {
-    return this.lang;
   }
 
   /**
@@ -412,7 +402,7 @@ export class TelegramNotifier extends EventEmitter {
         await this.replyToMessage(
           message.chat.id,
           message.message_id,
-          t('textinput.confirmed', this.lang, { n: optionNumber, text: truncatedText })
+          t('textinput.confirmed',{ n: optionNumber, text: truncatedText })
         );
         return;
       }
@@ -428,7 +418,7 @@ export class TelegramNotifier extends EventEmitter {
         await this.replyToMessage(
           message.chat.id,
           message.message_id,
-          t('reply.sent', this.lang, { text: truncatedReply })
+          t('reply.sent',{ text: truncatedReply })
         );
         return;
       }
@@ -479,8 +469,8 @@ export class TelegramNotifier extends EventEmitter {
           message.chat.id,
           message.message_id,
           isBroadcast
-            ? t('cmd.paused_broadcast', this.lang, { instanceId: this.instanceId })
-            : t('cmd.paused', this.lang)
+            ? t('cmd.paused_broadcast',{ instanceId: this.instanceId })
+            : t('cmd.paused')
         );
         break;
 
@@ -491,8 +481,8 @@ export class TelegramNotifier extends EventEmitter {
           message.chat.id,
           message.message_id,
           isBroadcast
-            ? t('cmd.resumed_broadcast', this.lang, { instanceId: this.instanceId })
-            : t('cmd.resumed', this.lang)
+            ? t('cmd.resumed_broadcast',{ instanceId: this.instanceId })
+            : t('cmd.resumed')
         );
         break;
 
@@ -525,7 +515,7 @@ export class TelegramNotifier extends EventEmitter {
       await this.replyToMessage(
         message.chat.id,
         message.message_id,
-        t('cmd.send_usage', this.lang)
+        t('cmd.send_usage')
       );
       return;
     }
@@ -551,7 +541,7 @@ export class TelegramNotifier extends EventEmitter {
       await this.replyToMessage(
         message.chat.id,
         message.message_id,
-        t('cmd.sent', this.lang, { text: textToSend.length > 30 ? textToSend.slice(0, 30) + '...' : textToSend })
+        t('cmd.sent',{ text: textToSend.length > 30 ? textToSend.slice(0, 30) + '...' : textToSend })
       );
     } else {
       // No instance ID, send to all instances (or just this one)
@@ -560,7 +550,7 @@ export class TelegramNotifier extends EventEmitter {
       await this.replyToMessage(
         message.chat.id,
         message.message_id,
-        t('cmd.sent_instance', this.lang, { instanceId: this.instanceId, text: trimmedArgs.length > 30 ? trimmedArgs.slice(0, 30) + '...' : trimmedArgs })
+        t('cmd.sent_instance',{ instanceId: this.instanceId, text: trimmedArgs.length > 30 ? trimmedArgs.slice(0, 30) + '...' : trimmedArgs })
       );
     }
   }
@@ -574,7 +564,7 @@ export class TelegramNotifier extends EventEmitter {
       await this.replyToMessage(
         message.chat.id,
         message.message_id,
-        t('cmd.key_usage', this.lang)
+        t('cmd.key_usage')
       );
       return;
     }
@@ -600,7 +590,7 @@ export class TelegramNotifier extends EventEmitter {
       await this.replyToMessage(
         message.chat.id,
         message.message_id,
-        t('cmd.key_sent', this.lang, { text: textToSend.length > 30 ? textToSend.slice(0, 30) + '...' : textToSend })
+        t('cmd.key_sent',{ text: textToSend.length > 30 ? textToSend.slice(0, 30) + '...' : textToSend })
       );
     } else {
       // No instance ID, send to all instances (or just this one)
@@ -609,7 +599,7 @@ export class TelegramNotifier extends EventEmitter {
       await this.replyToMessage(
         message.chat.id,
         message.message_id,
-        t('cmd.key_sent_instance', this.lang, { instanceId: this.instanceId, text: trimmedArgs.length > 30 ? trimmedArgs.slice(0, 30) + '...' : trimmedArgs })
+        t('cmd.key_sent_instance',{ instanceId: this.instanceId, text: trimmedArgs.length > 30 ? trimmedArgs.slice(0, 30) + '...' : trimmedArgs })
       );
     }
   }
@@ -752,12 +742,12 @@ export class TelegramNotifier extends EventEmitter {
     const textInputMatch = cmd.match(/^textinput(\d+)$/);
     if (textInputMatch) {
       const optionNumber = parseInt(textInputMatch[1], 10);
-      await this.answerCallback(query.id, t('textinput.callback', this.lang, { n: optionNumber }));
+      await this.answerCallback(query.id, t('textinput.callback',{ n: optionNumber }));
 
       // Send ForceReply message
       const forceReplyMessageId = await this.sendForceReplyMessage(
         query.message.chat.id,
-        t('textinput.prompt', this.lang, { n: optionNumber })
+        t('textinput.prompt',{ n: optionNumber })
       );
 
       if (forceReplyMessageId) {
@@ -806,7 +796,7 @@ export class TelegramNotifier extends EventEmitter {
           reply_markup: {
             force_reply: true,
             selective: true,
-            input_field_placeholder: t('textinput.placeholder', this.lang),
+            input_field_placeholder: t('textinput.placeholder'),
           },
         }),
       });
@@ -989,7 +979,7 @@ export class TelegramNotifier extends EventEmitter {
 
         // Cancel button
         rows.push([
-          { text: t('button.cancel', this.lang), callback_data: `escape:${this.instanceId}` },
+          { text: t('button.cancel'), callback_data: `escape:${this.instanceId}` },
         ]);
 
         return rows;
@@ -1033,7 +1023,7 @@ export class TelegramNotifier extends EventEmitter {
     type: NotificationType,
     details?: { queueLength?: number; message?: string; options?: ParsedOption[]; context?: string }
   ): Record<string, string> {
-    const title = t(`notify.${type}`, this.lang);
+    const title = t(`notify.${type}`);
 
     // Build context code block (selection_prompt only)
     let contextBlock = '';
@@ -1120,7 +1110,7 @@ export class TelegramNotifier extends EventEmitter {
       // Compact footer
       const footerParts = [`🆔 \`${vars.instanceId}\``];
       if (vars.queueLength) {
-        const items = t('queue.items', this.lang, { count: vars.queueLength });
+        const items = t('queue.items',{ count: vars.queueLength });
         footerParts.push(`📋 ${items}`);
       }
       lines.push('', footerParts.join(' · '));
@@ -1149,8 +1139,8 @@ export class TelegramNotifier extends EventEmitter {
     ];
 
     if (vars.queueLength) {
-      const label = t('queue.label', this.lang);
-      const items = t('queue.items', this.lang, { count: vars.queueLength });
+      const label = t('queue.label');
+      const items = t('queue.items',{ count: vars.queueLength });
       lines.push(`📋 ${label}: ${items}`);
     }
 
