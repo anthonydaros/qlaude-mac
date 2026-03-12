@@ -6,6 +6,7 @@ import TopBar from './components/TopBar';
 import TaskItem from './components/TaskItem';
 import TaskDetail from './components/TaskDetail';
 import AddTaskModal from './components/AddTaskModal';
+import TerminalView from './components/TerminalView';
 import OnboardingPage from './components/onboarding/OnboardingPage';
 
 type StatusFilter = 'all' | Task['status'];
@@ -31,7 +32,7 @@ export default function App(): React.ReactElement {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [showAddModal, setShowAddModal] = useState(false);
 
-  const { engineState, isPaused } = useEngine();
+  const { engineState } = useEngine();
   const { tasks, loading: tasksLoading, refetch: refetchTasks } = useTasks(workspacePath);
 
   // Check onboarding status on mount
@@ -238,36 +239,35 @@ export default function App(): React.ReactElement {
           </div>
         </div>
 
-        {/* Right panel: task detail or placeholder */}
+        {/* Right panel: task detail (collapsible) + terminal output */}
         <div
           style={{
             width: '40%',
-            background: '#16213e',
+            background: '#0d1117',
             overflow: 'hidden',
             display: 'flex',
             flexDirection: 'column',
           }}
         >
-          {selectedTask ? (
-            <TaskDetail task={selectedTask} />
-          ) : (
+          {/* Task detail -- only when a task is selected */}
+          {selectedTask && (
             <div
               style={{
-                flex: 1,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                color: '#4a5568',
-                fontSize: '13px',
+                height: '45%',
+                flexShrink: 0,
+                borderBottom: '1px solid #2d3748',
+                overflow: 'hidden',
+                background: '#16213e',
               }}
             >
-              {isPaused
-                ? 'Engine paused'
-                : engineState === 'running'
-                ? 'Engine running...'
-                : 'Select a task to view details'}
+              <TaskDetail task={selectedTask} />
             </div>
           )}
+
+          {/* Terminal output -- always visible */}
+          <div style={{ flex: 1, overflow: 'hidden' }}>
+            <TerminalView resizeToken={selectedTask?.id} />
+          </div>
         </div>
       </div>
 
