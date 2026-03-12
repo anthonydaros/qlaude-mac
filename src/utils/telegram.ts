@@ -6,6 +6,7 @@
 import { EventEmitter } from 'events';
 import { logger } from './logger.js';
 import { t } from './telegram-messages.js';
+import { stripAnsi } from './ansi.js';
 import type { TelegramConfig } from '../types/config.js';
 import type { ParsedOption } from '../types/state.js';
 import path from 'path';
@@ -1159,8 +1160,7 @@ export class TelegramNotifier extends EventEmitter {
     ];
 
     // Remove ANSI escape codes, keep indentation and backslashes
-    const cleaned = context
-      .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '')  // ANSI escape sequences
+    const cleaned = stripAnsi(context)
       .replace(/\r/g, '')  // Carriage returns
       .split('\n')
       .map(line => line.trimEnd())  // Keep leading whitespace (indentation)

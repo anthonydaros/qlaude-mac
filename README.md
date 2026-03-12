@@ -60,7 +60,7 @@ qlaude
 
 ## Requirements
 
-- **Node.js** 20 or later
+- **Node.js** 20.19 or later
 - **[Claude Code](https://docs.anthropic.com/en/docs/claude-code)** installed and authenticated
 - **Windows**: Use [Windows Terminal](https://aka.ms/terminal) or VS Code integrated terminal
 
@@ -69,6 +69,26 @@ qlaude
 For full usage guide, configuration, Telegram setup, queue file syntax, and more:
 
 **[Read the Manual →](MANUAL.md)**
+
+## Operations
+
+### Telegram Smoke
+
+- Isolate the smoke run with disposable `HOME` and workspace directories.
+- Put `botToken` and `chatId` in the disposable `~/.qlaude/telegram.json`, then enable Telegram in the disposable workspace.
+- Run `cd "$SMOKE_WORKSPACE" && HOME="$SMOKE_HOME" qlaude`, then verify `/status`, `/display`, and `/log`.
+
+Step-by-step guide: [Manual Smoke Checklist](MANUAL.md#manual-smoke-checklist)
+
+### Troubleshooting
+
+- Missing `/log` attachment, wrong `chatId`, or expired token:
+  use the troubleshooting block in [MANUAL.md](MANUAL.md#manual-smoke-checklist).
+
+### Token Rotation
+
+- If a token was exposed in chat, screenshots, or logs, rotate it immediately in
+  [@BotFather](https://t.me/BotFather) before reusing the bot.
 
 ## License
 

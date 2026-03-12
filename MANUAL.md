@@ -61,7 +61,7 @@ npm install -g qlaude@alpha
 ```
 
 Requirements:
-- Node.js >= 20.0.0
+- Node.js >= 20.19.0
 - Claude Code CLI installed and authenticated
 
 After installation, qlaude automatically sets up Claude Code hooks for session tracking. On uninstall, hooks are cleaned up automatically.
@@ -548,6 +548,85 @@ For `/send` and `/key`, the instance ID is optional when only one instance is ru
 /send Fix the login bug          # No instance ID (single instance)
 /send myhost:12345 Fix the bug   # With instance ID (multi-instance)
 ```
+
+### Manual Smoke Checklist
+
+Use this when you want to validate Telegram control locally without adding a temporary test file to the repository and without reusing your real CLI state.
+
+1. Create disposable directories for HOME and workspace:
+
+```bash
+SMOKE_HOME="$(mktemp -d -t qlaude-home)"
+SMOKE_WORKSPACE="$(mktemp -d -t qlaude-telegram-smoke)"
+mkdir -p "$SMOKE_HOME/.qlaude" "$SMOKE_WORKSPACE/.qlaude"
+printf 'queue log from manual smoke\n' > "$SMOKE_WORKSPACE/.qlaude/queue.log"
+```
+
+2. Save global Telegram credentials in the disposable HOME:
+
+```bash
+cat > "$SMOKE_HOME/.qlaude/telegram.json" <<'JSON'
+{
+  "botToken": "123456:ABC-DEF...",
+  "chatId": "987654321"
+}
+JSON
+chmod 600 "$SMOKE_HOME/.qlaude/telegram.json"
+```
+
+3. Enable Telegram in the disposable workspace:
+
+```bash
+cat > "$SMOKE_WORKSPACE/.qlaude/telegram.json" <<'JSON'
+{
+  "enabled": true
+}
+JSON
+chmod 600 "$SMOKE_WORKSPACE/.qlaude/telegram.json"
+```
+
+4. Start qlaude with isolated state:
+
+```bash
+cd "$SMOKE_WORKSPACE" && HOME="$SMOKE_HOME" qlaude
+```
+
+If you want to validate the current repository checkout instead of a globally installed CLI, run:
+
+```bash
+cd "$SMOKE_WORKSPACE" && HOME="$SMOKE_HOME" node /absolute/path/to/qlaude/dist/main.js
+```
+
+5. Send these commands to the bot and verify the responses:
+
+- `/status`
+  - Expect instance ID, workspace name, PTY status, current state, auto-execution status, and queue count.
+- `/display`
+  - Expect the latest terminal buffer in a code block, with ANSI escapes removed.
+- `/log`
+  - Expect one or more document replies when a queue log or session log exists.
+  - If no logs exist yet, expect the configured "no logs available" reply.
+
+6. Inspect the downloaded `/log` attachment and confirm it matches the queue or session content you expect.
+
+7. Clean up after the smoke:
+
+```bash
+rm -rf "$SMOKE_HOME" "$SMOKE_WORKSPACE"
+```
+
+If the bot token was shared in chat, logs, screenshots, or recordings during the smoke, rotate it in BotFather after the run.
+
+Optional troubleshooting:
+
+- `/log` returns no file
+  - Confirm `"$SMOKE_WORKSPACE/.qlaude/queue.log"` exists or that a Claude session log was created for the current workspace.
+  - If there are no queue or session logs yet, qlaude should reply with the configured "no logs available" message instead of a document.
+- `chatId` is wrong
+  - Send any message to the bot, then check `https://api.telegram.org/bot<TOKEN>/getUpdates` again and copy the numeric `chat.id` from the latest update.
+  - Save the corrected value in the disposable `telegram.json` before repeating the smoke.
+- Token expired or rotated
+  - Re-run `getMe` with the current token. If Telegram returns `401` or `ok: false`, generate a fresh token in BotFather and update the disposable config before retrying.
 
 ### Selection Response
 

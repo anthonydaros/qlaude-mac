@@ -78,7 +78,12 @@ export function resetScrollRegion(): string {
  * - Simple escapes: ESC 7, ESC 8, etc. (save/restore cursor)
  * - Control characters: \x1b followed by single char
  */
-const ANSI_REGEX = /\x1b(?:\[[?]?[0-9;]*[a-zA-Z]|\][^\x07]*\x07|[78]|.)/g;
+const ESC = String.fromCharCode(27);
+const BEL = String.fromCharCode(7);
+const ANSI_REGEX = new RegExp(
+  `${ESC}(?:\\[[?]?[0-9;]*[a-zA-Z]|\\][^${BEL}]*${BEL}|[78]|.)`,
+  'g'
+);
 
 /**
  * Strip all ANSI escape sequences from text

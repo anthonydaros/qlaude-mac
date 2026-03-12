@@ -73,7 +73,7 @@ export class StateDetector extends EventEmitter {
    * Analyze a chunk of PTY output
    * Any output means Claude is processing; idle triggers pattern analysis
    */
-  analyze(chunk: string): void {
+  analyze(_chunk: string): void {
     this.lastOutputTime = Date.now();
 
     // Clear existing idle timer

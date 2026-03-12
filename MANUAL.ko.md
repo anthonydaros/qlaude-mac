@@ -61,7 +61,7 @@ npm install -g qlaude@alpha
 ```
 
 필수 요건:
-- Node.js >= 20.0.0
+- Node.js >= 20.19.0
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) CLI 설치 및 인증 완료
 
 설치 시 Claude Code 세션 추적을 위한 훅이 자동으로 설정됩니다. 삭제 시 훅도 자동으로 정리됩니다.
@@ -574,6 +574,74 @@ qlaude가 텔레그램 메시지를 보내는 경우:
 여러 qlaude 인스턴스가 같은 텔레그램 봇을 공유할 수 있습니다. 각 인스턴스는 `호스트명:PID`로 식별됩니다. 인스턴스 ID가 없는 명령어는 `/pause`, `/resume`, `/status`, `/log`, `/display`의 경우 모든 인스턴스에 브로드캐스트됩니다. `/send`와 `/key`는 첫 단어에 콜론이 있으면 인스턴스 ID로 판단합니다.
 
 `confirmDelayMs` 설정 (기본 30000ms)은 업데이트가 모든 인스턴스에 표시된 후 확인되기까지의 대기 시간을 제어합니다. 한 인스턴스가 업데이트를 소비하기 전에 다른 인스턴스도 볼 수 있도록 합니다.
+
+### 수동 스모크 체크리스트
+
+임시 테스트 파일을 저장소에 추가하지 않고, 실제 CLI 상태를 재사용하지 않은 채로 텔레그램 제어를 로컬에서 검증할 때 사용합니다.
+
+1. HOME과 워크스페이스용 임시 디렉토리를 생성합니다:
+
+```bash
+SMOKE_HOME="$(mktemp -d -t qlaude-home)"
+SMOKE_WORKSPACE="$(mktemp -d -t qlaude-telegram-smoke)"
+mkdir -p "$SMOKE_HOME/.qlaude" "$SMOKE_WORKSPACE/.qlaude"
+printf 'queue log from manual smoke\n' > "$SMOKE_WORKSPACE/.qlaude/queue.log"
+```
+
+2. 임시 HOME에 글로벌 텔레그램 자격 증명을 저장합니다:
+
+```bash
+cat > "$SMOKE_HOME/.qlaude/telegram.json" <<'JSON'
+{
+  "botToken": "123456:ABC-DEF...",
+  "chatId": "987654321"
+}
+JSON
+chmod 600 "$SMOKE_HOME/.qlaude/telegram.json"
+```
+
+3. 임시 워크스페이스에서 텔레그램을 활성화합니다:
+
+```bash
+cat > "$SMOKE_WORKSPACE/.qlaude/telegram.json" <<'JSON'
+{
+  "enabled": true
+}
+JSON
+chmod 600 "$SMOKE_WORKSPACE/.qlaude/telegram.json"
+```
+
+4. 격리된 상태로 qlaude를 실행합니다:
+
+```bash
+cd "$SMOKE_WORKSPACE" && HOME="$SMOKE_HOME" qlaude
+```
+
+현재 저장소 체크아웃을 전역 설치 대신 검증하려면 다음 명령을 사용합니다:
+
+```bash
+cd "$SMOKE_WORKSPACE" && HOME="$SMOKE_HOME" node /absolute/path/to/qlaude/dist/main.js
+```
+
+5. 봇에 다음 명령을 보내고 응답을 확인합니다:
+
+- `/status`
+  - 인스턴스 ID, 워크스페이스 이름, PTY 상태, 현재 상태, 자동 실행 상태, 큐 개수가 표시되어야 합니다.
+- `/display`
+  - ANSI 이스케이프가 제거된 최신 터미널 버퍼가 코드 블록으로 표시되어야 합니다.
+- `/log`
+  - 큐 로그 또는 세션 로그가 있으면 하나 이상의 문서 답장이 와야 합니다.
+  - 로그가 아직 없으면 설정된 "로그 없음" 응답이 와야 합니다.
+
+6. 다운로드한 `/log` 첨부 파일이 예상한 큐 또는 세션 내용과 일치하는지 확인합니다.
+
+7. 스모크 테스트가 끝나면 정리합니다:
+
+```bash
+rm -rf "$SMOKE_HOME" "$SMOKE_WORKSPACE"
+```
+
+스모크 중 봇 토큰이 채팅, 로그, 스크린샷, 녹화 등에 노출되었다면 종료 후 BotFather에서 즉시 토큰을 교체하세요.
 
 ---
 

@@ -8,6 +8,7 @@ import {
   extractConversations,
   formatConversationsForLog,
 } from './utils/session-log-extractor.js';
+import { stripAnsi } from './utils/ansi.js';
 import type { TelegramNotifier } from './utils/telegram.js';
 import type { PtyWrapper } from './pty-wrapper.js';
 import type { AutoExecutor } from './auto-executor.js';
@@ -183,7 +184,7 @@ export function setupTelegramBridge(ctx: TelegramBridgeContext): void {
 
     // Clean ANSI codes and join lines
     const content = lines
-      .map(line => line.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, ''))
+      .map((line) => stripAnsi(line))
       .join('\n')
       .trim();
 

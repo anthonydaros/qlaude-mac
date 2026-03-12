@@ -11,7 +11,6 @@ import {
   restoreCursor,
   moveCursor,
   clearLine,
-  clearToEndOfLine,
   stripAnsi,
 } from './utils/ansi.js';
 
