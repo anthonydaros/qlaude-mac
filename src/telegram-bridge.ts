@@ -12,7 +12,7 @@ import type { TelegramNotifier } from './utils/telegram.js';
 import type { PtyWrapper } from './pty-wrapper.js';
 import type { AutoExecutor } from './auto-executor.js';
 import type { StateDetector } from './state-detector.js';
-import type { Display } from './display.js';
+import type { IDisplay } from './interfaces/display.js';
 import type { QueueManager } from './queue-manager.js';
 import type { ConversationLogger } from './utils/conversation-logger.js';
 import type { TerminalEmulator } from './utils/terminal-emulator.js';
@@ -22,17 +22,19 @@ export interface TelegramBridgeContext {
   ptyWrapper: PtyWrapper;
   autoExecutor: AutoExecutor;
   stateDetector: StateDetector;
-  display: Display;
+  display: IDisplay;
   queueManager: QueueManager;
   conversationLogger: ConversationLogger;
   terminalEmulator: TerminalEmulator;
   setInputBuffer: (val: string) => void;
+  cwd?: string;
 }
 
 export function setupTelegramBridge(ctx: TelegramBridgeContext): void {
   const {
     telegramNotifier, ptyWrapper, autoExecutor, stateDetector,
     display, queueManager, conversationLogger, terminalEmulator, setInputBuffer,
+    cwd = process.cwd(),
   } = ctx;
 
   // Handle commands from Telegram inline keyboard
@@ -89,7 +91,7 @@ export function setupTelegramBridge(ctx: TelegramBridgeContext): void {
       t('status.header'),
       ``,
       `🖥️ ${telegramNotifier.getInstanceId()}`,
-      `📁 ${path.basename(process.cwd())}`,
+      `📁 ${path.basename(cwd)}`,
       ``,
       t('status.pty', { status: ptyStatus }),
       t('status.state', { state: state.type }),
@@ -121,7 +123,7 @@ export function setupTelegramBridge(ctx: TelegramBridgeContext): void {
 
     // 2. Send current session log (converted from JSONL)
     if (sessionId) {
-      const sessionPath = getSessionFilePath(process.cwd(), sessionId);
+      const sessionPath = getSessionFilePath(cwd, sessionId);
       logger.debug({ sessionId, sessionPath }, 'Session log path lookup');
 
       if (sessionPath && existsSync(sessionPath)) {

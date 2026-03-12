@@ -13,6 +13,7 @@ describe('ErrorCode', () => {
     expect(ErrorCode.PTY_SPAWN_FAILED).toBe('E101');
     expect(ErrorCode.PTY_WRITE_FAILED).toBe('E102');
     expect(ErrorCode.PTY_UNEXPECTED_EXIT).toBe('E103');
+    expect(ErrorCode.PTY_SPAWN_HELPER_FAILED).toBe('E104');
   });
 
   it('should have correct Queue error codes', () => {
@@ -31,6 +32,9 @@ describe('getUserFriendlyMessage', () => {
   it('should return user-friendly message for PTY errors', () => {
     expect(getUserFriendlyMessage(ErrorCode.PTY_SPAWN_FAILED)).toBe(
       'Failed to start Claude Code. Please check if it is installed.'
+    );
+    expect(getUserFriendlyMessage(ErrorCode.PTY_SPAWN_HELPER_FAILED)).toBe(
+      'Failed to start Claude Code because node-pty spawn-helper is missing or not executable. Reinstall dependencies or fix its execute permission.'
     );
     expect(getUserFriendlyMessage(ErrorCode.PTY_UNEXPECTED_EXIT)).toBe(
       'Claude Code exited unexpectedly. Shutting down safely.'

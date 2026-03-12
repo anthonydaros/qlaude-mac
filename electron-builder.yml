@@ -1,0 +1,35 @@
+appId: com.qlaude.desktop
+productName: qlaude
+directories:
+  output: dist-electron
+  buildResources: build
+
+files:
+  - out/**/*
+  - '!out/**/*.map'
+
+mac:
+  target:
+    - target: dmg
+      arch: arm64
+  category: public.app-category.developer-tools
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  extendInfo:
+    NSAppleEventsUsageDescription: Required for automation features.
+
+dmg:
+  title: qlaude ${version}
+  window:
+    width: 540
+    height: 380
+
+asarUnpack:
+  - '**/*.node'
+
+publish:
+  provider: github
+  owner: starsh2001
+  repo: qlaude

@@ -6,6 +6,7 @@ export enum ErrorCode {
   PTY_SPAWN_FAILED = 'E101',
   PTY_WRITE_FAILED = 'E102',
   PTY_UNEXPECTED_EXIT = 'E103',
+  PTY_SPAWN_HELPER_FAILED = 'E104',
 
   // Queue Errors (E2xx)
   QUEUE_FILE_READ_FAILED = 'E201',
@@ -24,6 +25,7 @@ const userFriendlyMessages: Record<ErrorCode, string> = {
   [ErrorCode.PTY_SPAWN_FAILED]: 'Failed to start Claude Code. Please check if it is installed.',
   [ErrorCode.PTY_WRITE_FAILED]: 'Failed to send input to Claude Code.',
   [ErrorCode.PTY_UNEXPECTED_EXIT]: 'Claude Code exited unexpectedly. Shutting down safely.',
+  [ErrorCode.PTY_SPAWN_HELPER_FAILED]: 'Failed to start Claude Code because node-pty spawn-helper is missing or not executable. Reinstall dependencies or fix its execute permission.',
   [ErrorCode.QUEUE_FILE_READ_FAILED]: 'Queue file not found. Using empty queue.',
   [ErrorCode.QUEUE_FILE_WRITE_FAILED]: 'Cannot save queue. Changes may be lost on exit.',
   [ErrorCode.QUEUE_PARSE_FAILED]: 'Queue file corrupted. Using empty queue.',

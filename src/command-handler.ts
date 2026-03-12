@@ -2,7 +2,7 @@ import { parse } from './input-parser.js';
 import { logger } from './utils/logger.js';
 import { saveSessionLabel, getSessionLabel } from './utils/session-labels.js';
 import type { QueueManager } from './queue-manager.js';
-import type { Display } from './display.js';
+import type { IDisplay } from './interfaces/display.js';
 import type { AutoExecutor } from './auto-executor.js';
 import type { PtyWrapper } from './pty-wrapper.js';
 import type { StateDetector } from './state-detector.js';
@@ -20,7 +20,7 @@ function truncatePrompt(prompt: string): string {
 
 export interface CommandHandlerContext {
   queueManager: QueueManager;
-  display: Display;
+  display: IDisplay;
   autoExecutor: AutoExecutor;
   ptyWrapper: PtyWrapper;
   stateDetector: StateDetector;
@@ -28,12 +28,14 @@ export interface CommandHandlerContext {
   terminalEmulator: TerminalEmulator;
   getClaudeArgs: () => string[];
   setInHelpMode: (val: boolean) => void;
+  writeOutput?: (text: string) => void;
 }
 
 export function createCommandHandler(ctx: CommandHandlerContext): (input: string) => Promise<void> {
   const {
     queueManager, display, autoExecutor, ptyWrapper, stateDetector,
     conversationLogger, terminalEmulator, getClaudeArgs, setInHelpMode,
+    writeOutput = (text: string) => process.stdout.write(text),
   } = ctx;
 
   return async function handleCommand(input: string): Promise<void> {
@@ -259,7 +261,7 @@ export function createCommandHandler(ctx: CommandHandlerContext): (input: string
             '  @( ... @)         Multiline prompt',
           ];
           // Show help in PTY area — press any key to dismiss
-          process.stdout.write('\n' + helpLines.join('\n') + '\n\n(Press any key to return)\n');
+          writeOutput('\n' + helpLines.join('\n') + '\n\n(Press any key to return)\n');
           setInHelpMode(true);
         }
         break;
@@ -283,7 +285,7 @@ export function createCommandHandler(ctx: CommandHandlerContext): (input: string
                 : '';
               return `  ${i + 1}. ${tag}${prompt}`;
             });
-            process.stdout.write(`\n[Queue: ${items.length} items]\n${listLines.join('\n')}\n`);
+            writeOutput(`\n[Queue: ${items.length} items]\n${listLines.join('\n')}\n`);
             display.showMessage('info', `[Queue] ${items.length} items`);
           }
         }

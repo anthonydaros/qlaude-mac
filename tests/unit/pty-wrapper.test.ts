@@ -200,14 +200,16 @@ describe('PtyWrapper', () => {
   });
 
   describe('spawn integrity check', () => {
-    it('throws PtyError with E101 when ensureSpawnHelper fails', () => {
+    it('throws PtyError with E104 when ensureSpawnHelper fails', () => {
+      const helperError = new Error('spawn-helper not found');
       vi.mocked(ptyIntegrity.ensureSpawnHelper).mockImplementation(() => {
-        throw new Error('spawn-helper not found');
+        throw helperError;
       });
 
       expect(() => ptyWrapper.spawn(['--no-update'])).toThrowError(
         expect.objectContaining({
-          code: ErrorCode.PTY_SPAWN_FAILED,
+          code: ErrorCode.PTY_SPAWN_HELPER_FAILED,
+          cause: helperError,
         })
       );
     });

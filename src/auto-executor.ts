@@ -7,7 +7,7 @@ import { EventEmitter } from 'events';
 import type { StateDetector } from './state-detector.js';
 import type { QueueManager } from './queue-manager.js';
 import type { PtyWrapper } from './pty-wrapper.js';
-import type { Display } from './display.js';
+import type { IDisplay } from './interfaces/display.js';
 import type { AutoExecutorEvents, AutoExecutorConfig } from './types/auto-executor.js';
 import { NEW_SESSION_MESSAGES } from './types/auto-executor.js';
 import type { QueueItem } from './types/queue.js';
@@ -25,7 +25,7 @@ export interface AutoExecutorDependencies {
   stateDetector: StateDetector;
   queueManager: QueueManager;
   ptyWrapper: PtyWrapper;
-  display: Display;
+  display: IDisplay;
   getClaudeArgs: () => string[];
   conversationLogger?: ConversationLogger;
   terminalEmulator?: { clear: () => void };

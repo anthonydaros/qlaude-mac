@@ -13,6 +13,13 @@ describe('error-messages', () => {
       expect(message).toBe('Failed to start Claude Code. Please check if it is installed.');
     });
 
+    it('should return user-friendly message for PTY_SPAWN_HELPER_FAILED', () => {
+      const message = getUserFriendlyMessage(ErrorCode.PTY_SPAWN_HELPER_FAILED);
+      expect(message).toBe(
+        'Failed to start Claude Code because node-pty spawn-helper is missing or not executable. Reinstall dependencies or fix its execute permission.'
+      );
+    });
+
     it('should return user-friendly message for PTY_UNEXPECTED_EXIT', () => {
       const message = getUserFriendlyMessage(ErrorCode.PTY_UNEXPECTED_EXIT);
       expect(message).toBe('Claude Code exited unexpectedly. Shutting down safely.');
@@ -44,6 +51,14 @@ describe('error-messages', () => {
       const error = new PtyError('Technical error', ErrorCode.PTY_SPAWN_FAILED);
       const message = toUserFriendlyMessage(error);
       expect(message).toBe('Failed to start Claude Code. Please check if it is installed.');
+    });
+
+    it('should convert spawn-helper PtyError to user-friendly message', () => {
+      const error = new PtyError('Technical error', ErrorCode.PTY_SPAWN_HELPER_FAILED);
+      const message = toUserFriendlyMessage(error);
+      expect(message).toBe(
+        'Failed to start Claude Code because node-pty spawn-helper is missing or not executable. Reinstall dependencies or fix its execute permission.'
+      );
     });
 
     it('should convert StateError to user-friendly message', () => {

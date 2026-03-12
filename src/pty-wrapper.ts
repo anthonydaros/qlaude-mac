@@ -36,7 +36,7 @@ export class PtyWrapper extends EventEmitter {
     } catch (error) {
       throw new PtyError(
         `node-pty spawn-helper not executable: ${(error as Error).message}`,
-        ErrorCode.PTY_SPAWN_FAILED,
+        ErrorCode.PTY_SPAWN_HELPER_FAILED,
         false,
         error as Error
       );

@@ -3,7 +3,7 @@ import { ErrorCode, getUserFriendlyMessage } from './types/errors.js';
 import type { PtyWrapper } from './pty-wrapper.js';
 import type { AutoExecutor } from './auto-executor.js';
 import type { ConversationLogger } from './utils/conversation-logger.js';
-import type { Display } from './display.js';
+import type { IDisplay } from './interfaces/display.js';
 import type { TelegramNotifier } from './utils/telegram.js';
 import type { QueueManager } from './queue-manager.js';
 import type { BatchReporter } from './utils/batch-report.js';
@@ -12,18 +12,20 @@ export interface PtyLifecycleContext {
   ptyWrapper: PtyWrapper;
   autoExecutor: AutoExecutor;
   conversationLogger: ConversationLogger;
-  display: Display;
+  display: IDisplay;
   telegramNotifier: TelegramNotifier;
   queueManager: QueueManager;
   batchReporter: BatchReporter | null;
   cleanup: () => void;
   getClaudeArgs: () => string[];
+  onExit?: (code: number) => void;
 }
 
 export function setupPtyLifecycle(ctx: PtyLifecycleContext): void {
   const {
     ptyWrapper, autoExecutor, conversationLogger, display,
     telegramNotifier, queueManager, batchReporter, cleanup, getClaudeArgs,
+    onExit = (code: number) => process.exit(code),
   } = ctx;
 
   ptyWrapper.on('exit', async (exitCode: number) => {
@@ -40,7 +42,7 @@ export function setupPtyLifecycle(ctx: PtyLifecycleContext): void {
       } catch (error) {
         logger.error({ error }, 'Failed to restart PTY after session load failure');
         cleanup();
-        process.exit(1);
+        onExit(1);
       }
       return;
     }
@@ -82,7 +84,7 @@ export function setupPtyLifecycle(ctx: PtyLifecycleContext): void {
       } catch (error) {
         logger.error({ error }, 'Failed to restart PTY after crash');
         cleanup();
-        process.exit(1);
+        onExit(1);
       }
       return;
     }
@@ -96,6 +98,6 @@ export function setupPtyLifecycle(ctx: PtyLifecycleContext): void {
       display.showMessage('error', getUserFriendlyMessage(ErrorCode.PTY_UNEXPECTED_EXIT));
     }
     cleanup();
-    process.exit(exitCode);
+    onExit(exitCode);
   });
 }

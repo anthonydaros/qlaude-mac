@@ -4,6 +4,7 @@
  */
 
 import type { QueueItem, MessageType } from './types/index.js';
+import type { IDisplay } from './interfaces/display.js';
 import {
   COLORS,
   saveCursor,
@@ -39,7 +40,7 @@ const STATUS_BAR_HEIGHT = 5;
 /**
  * Display class for rendering queue status bar at the top of terminal
  */
-export class Display {
+export class Display implements IDisplay {
   private enabled: boolean = true;
   private lastHeight: number = 0;
   private currentMessage: { type: MessageType; text: string } | null = null;
