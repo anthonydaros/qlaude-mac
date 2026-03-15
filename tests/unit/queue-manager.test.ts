@@ -767,6 +767,19 @@ describe('QueueManager', () => {
 
       expect(queueManager.getLength()).toBe(2);
       expect(queueManager.getItems()).toHaveLength(2);
+      expect(queueManager.getItems()[0].prompt).toBe('prompt1');
+    });
+
+    it('should not allow mutating the next item through getNextItem', async () => {
+      vi.mocked(fs.readFile).mockResolvedValue('prompt1\nprompt2');
+      await queueManager.reload();
+
+      const item = queueManager.getNextItem();
+      expect(item).not.toBeNull();
+
+      item!.prompt = 'modified';
+
+      expect(queueManager.getNextItem()?.prompt).toBe('prompt1');
     });
   });
 });

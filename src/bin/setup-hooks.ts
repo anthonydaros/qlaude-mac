@@ -12,8 +12,9 @@
 import { installHook, isHookInstalled, getClaudeSettingsPath } from '../utils/hook-setup.js';
 import { ensureConfigDir } from '../utils/config.js';
 import { ensureSpawnHelper } from '../utils/pty-integrity.js';
+import { pathToFileURL } from 'url';
 
-function main(): void {
+export function main(): void {
   // Verify node-pty spawn-helper has executable permission (node-pty@1.1.0 ships without +x)
   try {
     ensureSpawnHelper();
@@ -62,4 +63,11 @@ function main(): void {
   }
 }
 
-main();
+function isExecutedDirectly(): boolean {
+  const entry = process.argv[1];
+  return !!entry && import.meta.url === pathToFileURL(entry).href;
+}
+
+if (isExecutedDirectly()) {
+  main();
+}

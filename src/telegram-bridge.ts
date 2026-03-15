@@ -1,6 +1,7 @@
 import path from 'path';
 import { existsSync, writeFileSync, unlinkSync } from 'fs';
 import { tmpdir, hostname as osHostname } from 'os';
+import { randomUUID } from 'crypto';
 import { logger } from './utils/logger.js';
 import { t } from './utils/telegram-messages.js';
 import {
@@ -135,7 +136,10 @@ export function setupTelegramBridge(ctx: TelegramBridgeContext): void {
 
           if (formatted) {
             // Save to temp file
-            const tempPath = path.join(tmpdir(), `session-${sessionId.slice(0, 8)}.log`);
+            const tempPath = path.join(
+              tmpdir(),
+              `session-${sessionId.slice(0, 8)}-${randomUUID()}.log`
+            );
             writeFileSync(tempPath, formatted, 'utf-8');
 
             const sent = await telegramNotifier.sendDocument(

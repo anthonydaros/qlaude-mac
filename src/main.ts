@@ -4,7 +4,7 @@ import path, { isAbsolute } from 'path';
 import { readFileSync, writeFileSync } from 'fs';
 import { PtyWrapper } from './pty-wrapper.js';
 import { logger, reconfigureLogger } from './utils/logger.js';
-import { parseArgs } from './utils/cli-args.js';
+import { parseArgs, type QlaudeArgs } from './utils/cli-args.js';
 import { createCleanup } from './utils/cleanup.js';
 import { debounce } from './utils/debounce.js';
 import { TerminalEmulator } from './utils/terminal-emulator.js';
@@ -22,166 +22,121 @@ import { createCommandHandler } from './command-handler.js';
 import { setupTelegramBridge } from './telegram-bridge.js';
 import { setupPtyLifecycle } from './pty-lifecycle.js';
 import { toUserFriendlyMessage } from './utils/error-messages.js';
-
-// Platform guard: macOS Apple Silicon only
-if (process.platform !== 'darwin' || process.arch !== 'arm64') {
-  process.stderr.write(`qlaude requires macOS on Apple Silicon (darwin/arm64).\nCurrent: ${process.platform}/${process.arch}\n`);
-  process.exit(1);
-}
-
-// Parse qlaude-specific CLI arguments before anything else
-const qlaudeArgs = parseArgs();
-
-// Run setup wizard on first run, then create config files
-if (isFirstRun() && process.stdin.isTTY) {
-  const { runSetupWizard, updateGlobalTelegramConfig, updateProjectTelegramConfig } = await import('./utils/setup-wizard.js');
-  const wizardResult = await runSetupWizard();
-  if (wizardResult) {
-    // Wizard completed — create config files and apply wizard choices
-    ensureConfigDir();
-    // Save credentials to global ~/.qlaude/telegram.json
-    if (wizardResult.telegram) {
-      const globalFields: Record<string, unknown> = {
-        botToken: wizardResult.telegram.botToken,
-      };
-      if (wizardResult.telegram.chatId) {
-        globalFields.chatId = wizardResult.telegram.chatId;
-      }
-      updateGlobalTelegramConfig(globalFields);
-      // Enable telegram in the project config
-      updateProjectTelegramConfig({ enabled: true });
-    } else {
-      // Telegram skipped — write marker so wizard doesn't re-run next boot
-      updateGlobalTelegramConfig({ enabled: false });
-    }
-  } else {
-    // Wizard cancelled — exit without creating config, re-runs next time
-    process.exit(0);
-  }
-} else {
-  ensureConfigDir();
-}
-
-// Load configuration
-const config = loadConfig();
-
-// Override startPaused if --run flag is set or queue file is provided
-if (qlaudeArgs.run || qlaudeArgs.queueFile) {
-  config.startPaused = false;
-}
-
-// Batch mode: auto-exit on queue completion with report
-const batchMode = !!qlaudeArgs.run;
-const batchReporter = batchMode ? new BatchReporter(qlaudeArgs.queueFile) : null;
-
-// Resolve log file paths relative to .qlaude/ directory
-const qlaudeDir = path.join(process.cwd(), QLAUDE_DIR);
-
-// Reconfigure logger with config settings (before any other logging)
-if (config.logFile || config.logLevel) {
-  const logFilePath = config.logFile
-    ? (isAbsolute(config.logFile) ? config.logFile : path.join(qlaudeDir, config.logFile))
-    : undefined;
-  reconfigureLogger(logFilePath, config.logLevel);
-}
-
-const configForLog = {
-  ...config,
-  telegram: {
-    ...config.telegram,
-    botToken: config.telegram.botToken ? '***REDACTED***' : '',
-    chatId: config.telegram.chatId ? '***REDACTED***' : '',
-  },
-};
-logger.info({ config: configForLog }, 'Configuration loaded');
-
-const ptyWrapper = new PtyWrapper();
-const queueManager = new QueueManager(path.join(QLAUDE_DIR, 'queue'));
-const display = new Display();
-const stateDetector = new StateDetector({
-  idleThresholdMs: config.idleThresholdMs,
-  requiredStableChecks: config.requiredStableChecks,
-  patterns: compilePatterns(config.patterns),
-});
-// Resolve conversationLog filePath relative to .qlaude/ directory
-const resolvedConvLogConfig = {
-  ...config.conversationLog,
-  filePath: isAbsolute(config.conversationLog.filePath)
-    ? config.conversationLog.filePath
-    : path.join(QLAUDE_DIR, config.conversationLog.filePath),
-};
-const conversationLogger = new ConversationLogger(resolvedConvLogConfig);
-const telegramNotifier = new TelegramNotifier(config.telegram);
-
-// Terminal emulator to track current input line from PTY output (initialized with default size)
-const terminalEmulator = new TerminalEmulator(process.stdout.columns || 80, process.stdout.rows || 30);
-
-// claudeArgs will be set in main() and accessed via callback
-let claudeArgs: string[] = [];
-
-// Multiline input buffer state
-let multilineBuffer: string[] = [];
-let inMultilineMode = false;
-let multilineIsNewSession = false;
-
-// Direct input buffer for reliable command detection
-let inputBuffer = '';
-
-// Help screen mode — any keypress clears and returns to normal
-let inHelpMode = false;
-
-// Queue input mode state
-let inQueueInputMode = false;
-let queueInputBuffer = '';
-
-// AutoExecutor subscribes to stateDetector events in constructor
-const autoExecutor = new AutoExecutor({
-  stateDetector,
-  queueManager,
-  ptyWrapper,
-  display,
-  getClaudeArgs: () => claudeArgs,
-  conversationLogger,
-  terminalEmulator,
-  telegramNotifier,
-}, { enabled: !config.startPaused });
-const cleanup = createCleanup(ptyWrapper, display);
-
-function setupTerminal(): void {
-  if (process.stdin.isTTY) {
-    process.stdin.setRawMode(true);
-  }
-  process.stdin.resume();
-}
-
+import type { ConversationLogConfig } from './types/config.js';
 
 const STATUS_BAR_HEIGHT = 5;
+const STATUS_BAR_DEBOUNCE_MS = 200;
+const RESIZE_DEBOUNCE_MS = 100;
+const MIN_COLS = 40;
+const MIN_ROWS = 10;
 
-async function main(): Promise<void> {
-  claudeArgs = qlaudeArgs.claudeArgs;
+type LoadedConfig = ReturnType<typeof loadConfig>;
+type ProcessEventName =
+  | 'exit'
+  | 'SIGINT'
+  | 'SIGTERM'
+  | 'SIGHUP'
+  | 'uncaughtException'
+  | 'unhandledRejection';
 
-  // Copy queue file if --queue or positional file arg was provided
-  if (qlaudeArgs.queueFile) {
-    const queueFilePath = path.join(QLAUDE_DIR, 'queue');
-    try {
-      const sourcePath = path.resolve(qlaudeArgs.queueFile);
-      const content = readFileSync(sourcePath, 'utf-8');
-      writeFileSync(queueFilePath, content, { mode: 0o600 });
-      logger.info({ source: sourcePath, dest: queueFilePath }, 'Queue file copied from CLI argument');
-    } catch (err) {
-      const error = err as NodeJS.ErrnoException;
-      if (error.code === 'ENOENT') {
-        process.stderr.write(`Error: Queue file not found: ${qlaudeArgs.queueFile}\n`);
-      } else {
-        process.stderr.write(`Error: Cannot read queue file: ${qlaudeArgs.queueFile} (${error.message})\n`);
-      }
-      process.exit(1);
-    }
+export interface ProcessRuntime {
+  stdin: NodeJS.ReadStream & {
+    isTTY?: boolean;
+    setRawMode?(mode: boolean): void;
+  };
+  stdout: NodeJS.WriteStream & {
+    columns?: number;
+    rows?: number;
+  };
+  stderr: NodeJS.WriteStream;
+  on(event: ProcessEventName, handler: (...args: unknown[]) => void): void;
+  exit(code: number): never;
+  wait(ms: number): Promise<void>;
+  cwd(): string;
+  readFileSync(filePath: string, encoding: BufferEncoding): string;
+  writeFileSync(filePath: string, data: string, options?: BufferEncoding | { encoding?: BufferEncoding; mode?: number }): void;
+}
+
+export interface RuntimeContext {
+  qlaudeArgs: QlaudeArgs;
+  config: LoadedConfig;
+  batchMode: boolean;
+  batchReporter: BatchReporter | null;
+  qlaudeDir: string;
+  resolvedConvLogConfig: ConversationLogConfig;
+}
+
+export interface RuntimeServices {
+  ptyWrapper: PtyWrapper;
+  queueManager: QueueManager;
+  display: Display;
+  stateDetector: StateDetector;
+  autoExecutor: AutoExecutor;
+  conversationLogger: ConversationLogger;
+  telegramNotifier: TelegramNotifier;
+  terminalEmulator: TerminalEmulator;
+  cleanup: () => void;
+}
+
+interface ResolveRuntimeContextOptions {
+  args?: QlaudeArgs;
+  runtime?: Partial<ProcessRuntime>;
+}
+
+interface CreateRuntimeServicesOptions {
+  runtime?: Partial<ProcessRuntime>;
+  overrides?: Partial<RuntimeServices>;
+}
+
+interface RunCliOptions {
+  runtime?: Partial<ProcessRuntime>;
+  context?: RuntimeContext;
+  services?: Partial<RuntimeServices>;
+}
+
+function createRuntime(overrides?: Partial<ProcessRuntime>): ProcessRuntime {
+  return {
+    stdin: process.stdin,
+    stdout: process.stdout,
+    stderr: process.stderr,
+    on: (event, handler) => {
+      process.on(event, handler as never);
+    },
+    exit: (code) => process.exit(code),
+    wait: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    cwd: () => process.cwd(),
+    readFileSync: (filePath, encoding) => readFileSync(filePath, encoding),
+    writeFileSync: (filePath, data, options) => writeFileSync(filePath, data, options as never),
+    ...overrides,
+  };
+}
+
+function getTerminalSize(stdout: ProcessRuntime['stdout']): { cols: number; rows: number } {
+  return {
+    cols: stdout.columns || 80,
+    rows: stdout.rows || 30,
+  };
+}
+
+function setupTerminal(stdin: ProcessRuntime['stdin']): void {
+  if (stdin.isTTY && stdin.setRawMode) {
+    stdin.setRawMode(true);
   }
+  stdin.resume();
+}
 
-  setupTerminal();
+function assertSupportedPlatform(): void {
+  if (process.platform !== 'darwin' || process.arch !== 'arm64') {
+    process.stderr.write(
+      `qlaude requires macOS on Apple Silicon (darwin/arm64).\nCurrent: ${process.platform}/${process.arch}\n`
+    );
+    process.exit(1);
+  }
+}
 
-  // Subscribe to QueueManager events for status bar updates
+function registerQueueManagerHandlers(services: RuntimeServices): void {
+  const { queueManager, display } = services;
+
   queueManager.on('item_added', () => {
     display.updateStatusBar(queueManager.getItems());
   });
@@ -198,7 +153,6 @@ async function main(): Promise<void> {
     display.updateStatusBar(queueManager.getItems());
   });
 
-  // Subscribe to QueueManager file I/O error events
   queueManager.on('file_read_error', () => {
     display.showMessage('warning', '[Queue] File read failed, using in-memory queue');
   });
@@ -210,439 +164,545 @@ async function main(): Promise<void> {
   queueManager.on('file_recovered', () => {
     display.showMessage('info', '[Queue] File recovered');
   });
+}
 
-  // Set initial paused state
-  display.setPaused(config.startPaused);
+export async function resolveRuntimeContext(
+  options: ResolveRuntimeContextOptions = {}
+): Promise<RuntimeContext> {
+  const runtime = createRuntime(options.runtime);
+  const qlaudeArgs = options.args ?? parseArgs();
 
-  // Load queue file and render initial status bar BEFORE PTY spawn
-  // This ensures scroll region is set correctly before Claude Code starts outputting
-  await queueManager.reload();
-  display.updateStatusBar(queueManager.getItems());
+  if (isFirstRun() && runtime.stdin.isTTY) {
+    const { runSetupWizard, updateGlobalTelegramConfig, updateProjectTelegramConfig } = await import('./utils/setup-wizard.js');
+    const wizardResult = await runSetupWizard();
+    if (wizardResult) {
+      ensureConfigDir();
+      if (wizardResult.telegram) {
+        const globalFields: Record<string, unknown> = {
+          botToken: wizardResult.telegram.botToken,
+        };
+        if (wizardResult.telegram.chatId) {
+          globalFields.chatId = wizardResult.telegram.chatId;
+        }
+        updateGlobalTelegramConfig(globalFields);
+        updateProjectTelegramConfig({ enabled: true });
+      } else {
+        updateGlobalTelegramConfig({ enabled: false });
+      }
+    } else {
+      runtime.exit(0);
+    }
+  } else {
+    ensureConfigDir();
+  }
 
-  // Subscribe to StateDetector events for logging and buffer management
-  // Deduplicate SELECTION_PROMPT notifications by comparing screen content
-  // Cursor movement only changes ❯/> position; normalize these before comparison
-  let lastSelectionSnapshotKey = '';
+  const config = loadConfig();
 
-  // Track queue execution state to suppress notifications before queue starts
-  let queueExecutionStarted = false;
+  if (qlaudeArgs.run || qlaudeArgs.queueFile) {
+    config.startPaused = false;
+  }
 
-  // Reset dedup when selection input (Enter or digit) is sent to PTY during SELECTION_PROMPT
-  const originalPtyWrite = ptyWrapper.write.bind(ptyWrapper);
-  ptyWrapper.write = (data: string) => {
-    if (stateDetector.getState().type === 'SELECTION_PROMPT') {
+  const batchMode = !!qlaudeArgs.run;
+  const batchReporter = batchMode ? new BatchReporter(qlaudeArgs.queueFile) : null;
+  const qlaudeDir = path.join(runtime.cwd(), QLAUDE_DIR);
+
+  if (config.logFile || config.logLevel) {
+    const logFilePath = config.logFile
+      ? (isAbsolute(config.logFile) ? config.logFile : path.join(qlaudeDir, config.logFile))
+      : undefined;
+    reconfigureLogger(logFilePath, config.logLevel);
+  }
+
+  const configForLog = {
+    ...config,
+    telegram: {
+      ...config.telegram,
+      botToken: config.telegram.botToken ? '***REDACTED***' : '',
+      chatId: config.telegram.chatId ? '***REDACTED***' : '',
+    },
+  };
+  logger.info({ config: configForLog }, 'Configuration loaded');
+
+  const resolvedConvLogConfig: ConversationLogConfig = {
+    ...config.conversationLog,
+    filePath: isAbsolute(config.conversationLog.filePath)
+      ? config.conversationLog.filePath
+      : path.join(QLAUDE_DIR, config.conversationLog.filePath),
+  };
+
+  return {
+    qlaudeArgs,
+    config,
+    batchMode,
+    batchReporter,
+    qlaudeDir,
+    resolvedConvLogConfig,
+  };
+}
+
+export function createRuntimeServices(
+  context: RuntimeContext,
+  options: CreateRuntimeServicesOptions = {}
+): RuntimeServices {
+  const runtime = createRuntime(options.runtime);
+  const overrides = options.overrides ?? {};
+
+  const ptyWrapper = overrides.ptyWrapper ?? new PtyWrapper();
+  const queueManager = overrides.queueManager ?? new QueueManager(path.join(QLAUDE_DIR, 'queue'));
+  const display = overrides.display ?? new Display();
+  const stateDetector = overrides.stateDetector ?? new StateDetector({
+    idleThresholdMs: context.config.idleThresholdMs,
+    requiredStableChecks: context.config.requiredStableChecks,
+    patterns: compilePatterns(context.config.patterns),
+  });
+  const conversationLogger = overrides.conversationLogger ?? new ConversationLogger(context.resolvedConvLogConfig);
+  const telegramNotifier = overrides.telegramNotifier ?? new TelegramNotifier(context.config.telegram);
+  const { cols, rows } = getTerminalSize(runtime.stdout);
+  const terminalEmulator = overrides.terminalEmulator ?? new TerminalEmulator(cols, rows);
+  const autoExecutor = overrides.autoExecutor ?? new AutoExecutor({
+    stateDetector,
+    queueManager,
+    ptyWrapper,
+    display,
+    getClaudeArgs: () => context.qlaudeArgs.claudeArgs,
+    conversationLogger,
+    terminalEmulator,
+    telegramNotifier,
+  }, { enabled: !context.config.startPaused });
+  const cleanup = overrides.cleanup ?? createCleanup(ptyWrapper, display, runtime.stdin);
+
+  return {
+    ptyWrapper,
+    queueManager,
+    display,
+    stateDetector,
+    autoExecutor,
+    conversationLogger,
+    telegramNotifier,
+    terminalEmulator,
+    cleanup,
+  };
+}
+
+export function registerProcessHandlers(
+  services: RuntimeServices,
+  runtimeOverrides?: Partial<ProcessRuntime>
+): void {
+  const runtime = createRuntime(runtimeOverrides);
+
+  runtime.on('exit', () => {
+    services.telegramNotifier.stopPolling();
+    services.cleanup();
+  });
+
+  runtime.on('SIGINT', () => {
+    services.ptyWrapper.write('\x03');
+  });
+
+  runtime.on('SIGTERM', () => {
+    logger.info('Received SIGTERM, shutting down...');
+    services.cleanup();
+    runtime.exit(0);
+  });
+
+  runtime.on('SIGHUP', () => {
+    logger.info('Received SIGHUP, shutting down...');
+    services.cleanup();
+    runtime.exit(0);
+  });
+
+  runtime.on('uncaughtException', (error) => {
+    logger.error({ error }, 'Uncaught exception');
+    services.cleanup();
+    runtime.exit(1);
+  });
+
+  runtime.on('unhandledRejection', (reason) => {
+    logger.error({ reason }, 'Unhandled rejection');
+    services.cleanup();
+    runtime.exit(1);
+  });
+}
+
+export function attachTerminalHandlers(
+  context: RuntimeContext,
+  services: RuntimeServices,
+  runtimeOverrides?: Partial<ProcessRuntime>
+): void {
+  const runtime = createRuntime(runtimeOverrides);
+  const state = {
+    inputBuffer: '',
+    multilineBuffer: [] as string[],
+    inMultilineMode: false,
+    multilineIsNewSession: false,
+    inHelpMode: false,
+    inQueueInputMode: false,
+    queueInputBuffer: '',
+    queueExecutionStarted: false,
+    lastSelectionSnapshotKey: '',
+    scrollRegionInitialized: false,
+  };
+
+  const renderQueuePromptOverlay = (): void => {
+    if (!state.inQueueInputMode) return;
+    const { rows } = getTerminalSize(runtime.stdout);
+    runtime.stdout.write(`\x1b7\x1b[${rows};1H\x1b[2K\x1b[33m[Q]\x1b[0m ${state.queueInputBuffer}\x1b8`);
+  };
+
+  const renderQueuePrompt = (buffer: string): void => {
+    const { rows } = getTerminalSize(runtime.stdout);
+    runtime.stdout.write(`\x1b7\x1b[${rows};1H\x1b[2K\x1b[33m[Q]\x1b[0m ${buffer}\x1b8`);
+  };
+
+  const clearQueuePrompt = (): void => {
+    const { rows } = getTerminalSize(runtime.stdout);
+    runtime.stdout.write(`\x1b7\x1b[${rows};1H\x1b[2K\x1b8`);
+  };
+
+  const originalPtyWrite = services.ptyWrapper.write.bind(services.ptyWrapper);
+  services.ptyWrapper.write = (data: string) => {
+    if (services.stateDetector.getState().type === 'SELECTION_PROMPT') {
       if (data === '\r' || /^\d+$/.test(data)) {
-        lastSelectionSnapshotKey = '';
+        state.lastSelectionSnapshotKey = '';
       }
     }
     originalPtyWrite(data);
   };
 
-  stateDetector.on('state_change', (state) => {
-    logger.debug({ state }, 'Claude Code state changed');
+  services.stateDetector.on('state_change', (currentState) => {
+    logger.debug({ state: currentState }, 'Claude Code state changed');
 
-    // Send Telegram notifications for SELECTION_PROMPT (independent of autoExecutor.enabled)
-    // Note: INTERRUPTED notifications removed due to high false positive rate from code content
-    // Skip notifications before queue starts (e.g. initial Claude Code setup prompts)
-    if (state.type === 'SELECTION_PROMPT' && queueExecutionStarted) {
-      const snapshot = state.metadata?.bufferSnapshot ?? '';
-      // Strip cursor indicators and navigation footer so cursor movement doesn't change the key
-      // Footer varies: "Enter to select · ↑/↓ to navigate · ctrl+g to edit in Notepad · Esc to cancel"
+    if (currentState.type === 'SELECTION_PROMPT' && state.queueExecutionStarted) {
+      const snapshot = currentState.metadata?.bufferSnapshot ?? '';
       const snapshotKey = snapshot
         .replace(/[❯>]/g, '')
         .replace(/Enter to select.*$/m, '')
         .replace(/\s+/g, ' ');
-      if (snapshotKey && snapshotKey === lastSelectionSnapshotKey) {
+      if (snapshotKey && snapshotKey === state.lastSelectionSnapshotKey) {
         logger.debug('Skipping duplicate SELECTION_PROMPT (same screen content)');
         return;
       }
-      lastSelectionSnapshotKey = snapshotKey;
-      const options = state.metadata?.options;
-      const context = state.metadata?.bufferSnapshot;
-      telegramNotifier.notify('selection_prompt', {
-        queueLength: queueManager.getLength(),
-        options,
-        context,
+      state.lastSelectionSnapshotKey = snapshotKey;
+      services.telegramNotifier.notify('selection_prompt', {
+        queueLength: services.queueManager.getLength(),
+        options: currentState.metadata?.options,
+        context: currentState.metadata?.bufferSnapshot,
       });
     }
   });
 
-  // Subscribe to AutoExecutor events for conversation logging
-  autoExecutor.on('queue_started', () => {
-    queueExecutionStarted = true;
-    batchReporter?.start();
-    conversationLogger.logQueueStarted();
+  services.autoExecutor.on('queue_started', () => {
+    state.queueExecutionStarted = true;
+    context.batchReporter?.start();
+    services.conversationLogger.logQueueStarted();
   });
 
-  autoExecutor.on('queue_completed', async () => {
-    queueExecutionStarted = false;
-    conversationLogger.logQueueCompleted();
-    if (batchReporter) {
-      batchReporter.writeReport('completed');
-      // Wait for pending Telegram notification to be sent before exiting
-      await new Promise((resolve) => setTimeout(resolve, 2000));
-      cleanup();
-      process.exit(0);
+  services.autoExecutor.on('queue_completed', async () => {
+    state.queueExecutionStarted = false;
+    services.conversationLogger.logQueueCompleted();
+    if (context.batchReporter) {
+      context.batchReporter.writeReport('completed');
+      await runtime.wait(2000);
+      services.cleanup();
+      runtime.exit(0);
     }
   });
 
-  autoExecutor.on('executed', () => {
-    batchReporter?.recordItemExecuted();
-    // Clear inputBuffer: auto-executed prompt replaces any user-typed partial input
-    inputBuffer = '';
+  services.autoExecutor.on('executed', () => {
+    context.batchReporter?.recordItemExecuted();
+    state.inputBuffer = '';
   });
 
-  autoExecutor.on('task_failed', async (reason) => {
-    if (batchReporter) {
-      batchReporter.writeReport('failed', reason);
-      await new Promise((resolve) => setTimeout(resolve, 2000));
-      cleanup();
-      process.exit(1);
+  services.autoExecutor.on('task_failed', async (reason) => {
+    if (context.batchReporter) {
+      context.batchReporter.writeReport('failed', reason);
+      await runtime.wait(2000);
+      services.cleanup();
+      runtime.exit(1);
     }
   });
 
-  autoExecutor.on('session_restart', (item) => {
-    conversationLogger.logNewSessionStarting(item);
-    terminalEmulator.clear();  // Clear old session content
-    stateDetector.reset();  // Reset state detector for new session
-    inputBuffer = '';  // Clear stale input from previous session
+  services.autoExecutor.on('session_restart', (item) => {
+    services.conversationLogger.logNewSessionStarting(item);
+    services.terminalEmulator.clear();
+    services.stateDetector.reset();
+    state.inputBuffer = '';
   });
 
-  // Start Telegram polling for bidirectional communication
-  if (telegramNotifier.isEnabled()) {
-    telegramNotifier.startPolling();
-    logger.info({ instanceId: telegramNotifier.getInstanceId() }, 'Telegram bidirectional communication enabled');
-  }
+  services.stateDetector.setScreenContentProvider(() => services.terminalEmulator.getLastLines(25));
 
-  setupTelegramBridge({
-    telegramNotifier,
-    ptyWrapper,
-    autoExecutor,
-    stateDetector,
-    display,
-    queueManager,
-    conversationLogger,
-    terminalEmulator,
-    setInputBuffer: (val: string) => { inputBuffer = val; },
-  });
-
-  // Connect terminal emulator to state detector for pattern analysis
-  // Use last 25 lines to capture multi-line menus with descriptions (each option can be 2+ lines)
-  stateDetector.setScreenContentProvider(() => terminalEmulator.getLastLines(25));
-
-  // Helper to render queue prompt at bottom of terminal (needs to be accessible from PTY handler)
-  const renderQueuePromptOverlay = (): void => {
-    if (!inQueueInputMode) return;
-    const rows = process.stdout.rows || 30;
-    // Save cursor, move to last row, clear line, show prompt, restore cursor
-    process.stdout.write(`\x1b7\x1b[${rows};1H\x1b[2K\x1b[33m[Q]\x1b[0m ${queueInputBuffer}\x1b8`);
-  };
-
-  // Debounced status bar re-render after PTY output
-  // Higher debounce reduces flickering but may show stale content briefly
-  const STATUS_BAR_DEBOUNCE_MS = 200;
   const reRenderStatusBar = debounce(() => {
-    display.updateStatusBar(queueManager.getItems());
+    services.display.updateStatusBar(services.queueManager.getItems());
   }, STATUS_BAR_DEBOUNCE_MS);
 
-  // Flag to set scroll region on first PTY output (ensures PTY is ready)
-  let scrollRegionInitialized = false;
-
-  ptyWrapper.on('data', (data: string) => {
-    // Initialize scroll region on first PTY output
-    if (!scrollRegionInitialized) {
-      scrollRegionInitialized = true;
-      const rows = process.stdout.rows || 30;
-      process.stdout.write(`\x1b[${STATUS_BAR_HEIGHT + 1};${rows}r`);  // Scroll region: row 6 to bottom
-      process.stdout.write(`\x1b[${STATUS_BAR_HEIGHT + 1};1H`);        // Move cursor to row 6, col 1
+  services.ptyWrapper.on('data', (data: string) => {
+    if (!state.scrollRegionInitialized) {
+      state.scrollRegionInitialized = true;
+      const { rows } = getTerminalSize(runtime.stdout);
+      runtime.stdout.write(`\x1b[${STATUS_BAR_HEIGHT + 1};${rows}r`);
+      runtime.stdout.write(`\x1b[${STATUS_BAR_HEIGHT + 1};1H`);
     }
 
-    process.stdout.write(data);
-    stateDetector.analyze(data);
-    terminalEmulator.write(data);
+    runtime.stdout.write(data);
+    services.stateDetector.analyze(data);
+    services.terminalEmulator.write(data);
     reRenderStatusBar();
-    // Re-render queue prompt if in queue mode (PTY output may have overwritten it)
     renderQueuePromptOverlay();
   });
 
-  setupPtyLifecycle({
-    ptyWrapper,
-    autoExecutor,
-    conversationLogger,
-    display,
-    telegramNotifier,
-    queueManager,
-    batchReporter,
-    cleanup,
-    getClaudeArgs: () => claudeArgs,
-  });
-
   const handleCommand = createCommandHandler({
-    queueManager,
-    display,
-    autoExecutor,
-    ptyWrapper,
-    stateDetector,
-    conversationLogger,
-    terminalEmulator,
-    getClaudeArgs: () => claudeArgs,
-    setInHelpMode: (val: boolean) => { inHelpMode = val; },
+    queueManager: services.queueManager,
+    display: services.display,
+    autoExecutor: services.autoExecutor,
+    ptyWrapper: services.ptyWrapper,
+    stateDetector: services.stateDetector,
+    conversationLogger: services.conversationLogger,
+    terminalEmulator: services.terminalEmulator,
+    getClaudeArgs: () => context.qlaudeArgs.claudeArgs,
+    setInHelpMode: (value: boolean) => {
+      state.inHelpMode = value;
+    },
+    writeOutput: (text: string) => {
+      runtime.stdout.write(text);
+    },
   });
 
+  runtime.stdin.on('data', async (chunk: Buffer) => {
+    const input = chunk.toString();
 
-  process.stdin.on('data', async (data: Buffer) => {
-    const input = data.toString();
-
-    // Help mode — any keypress clears screen and returns to normal
-    if (inHelpMode) {
-      inHelpMode = false;
-      // Clear screen and re-render
-      const cols = process.stdout.columns || 80;
-      const rows = process.stdout.rows || 30;
-      process.stdout.write('\x1b[2J\x1b[H');  // Clear screen + cursor home
-      display.updateStatusBar(queueManager.getItems());
-      process.stdout.write(`\x1b[${STATUS_BAR_HEIGHT + 1};${rows}r`);  // Restore scroll region
-      process.stdout.write(`\x1b[${STATUS_BAR_HEIGHT + 1};1H`);        // Cursor below status bar
-      ptyWrapper.resize(cols, rows);  // Force Claude Code to redraw
+    if (state.inHelpMode) {
+      state.inHelpMode = false;
+      const { cols, rows } = getTerminalSize(runtime.stdout);
+      runtime.stdout.write('\x1b[2J\x1b[H');
+      services.display.updateStatusBar(services.queueManager.getItems());
+      runtime.stdout.write(`\x1b[${STATUS_BAR_HEIGHT + 1};${rows}r`);
+      runtime.stdout.write(`\x1b[${STATUS_BAR_HEIGHT + 1};1H`);
+      services.ptyWrapper.resize(cols, rows);
       return;
     }
 
-    // Multiline mode handling
-    if (inMultilineMode) {
+    if (state.inMultilineMode) {
       if (input === '\r' || input === '\n') {
-        // Use inputBuffer for reliable detection
-        const currentLine = inputBuffer.trim();
-        inputBuffer = '';
+        const currentLine = state.inputBuffer.trim();
+        state.inputBuffer = '';
 
         if (currentLine === ':)') {
-          // End multiline mode
-          const prompt = multilineBuffer.join('\n');
+          const prompt = state.multilineBuffer.join('\n');
           try {
-            await queueManager.addItem(prompt, {
-              isNewSession: multilineIsNewSession,
+            await services.queueManager.addItem(prompt, {
+              isNewSession: state.multilineIsNewSession,
               isMultiline: true,
             });
-            display.showMessage('success', `[Queue +1] Added multiline (${multilineBuffer.length} lines)`);
+            services.display.showMessage('success', `[Queue +1] Added multiline (${state.multilineBuffer.length} lines)`);
           } catch (err) {
             logger.error({ err }, 'Failed to add multiline item to queue');
-            display.showMessage('error', '[Queue] Error: Failed to add multiline item');
+            services.display.showMessage('error', '[Queue] Error: Failed to add multiline item');
           }
 
-          // Reset state
-          multilineBuffer = [];
-          inMultilineMode = false;
-          multilineIsNewSession = false;
+          state.multilineBuffer = [];
+          state.inMultilineMode = false;
+          state.multilineIsNewSession = false;
 
-          // Clear PTY line
-          ptyWrapper.write('\x15');
-          process.stdout.write('\r\x1b[2K');
-          terminalEmulator.clear();
+          services.ptyWrapper.write('\x15');
+          runtime.stdout.write('\r\x1b[2K');
+          services.terminalEmulator.clear();
         } else {
-          // Add line to buffer
-          multilineBuffer.push(currentLine);
-          // Show multiline prompt
-          ptyWrapper.write('\x15');
-          process.stdout.write(`\r\x1b[2K[ML ${multilineBuffer.length}] `);
-          terminalEmulator.clear();
+          state.multilineBuffer.push(currentLine);
+          services.ptyWrapper.write('\x15');
+          runtime.stdout.write(`\r\x1b[2K[ML ${state.multilineBuffer.length}] `);
+          services.terminalEmulator.clear();
         }
       } else if (input === '\x7f' || input === '\b') {
-        // Backspace - update buffer and pass to PTY
-        inputBuffer = inputBuffer.slice(0, -1);
-        ptyWrapper.write(input);
+        state.inputBuffer = state.inputBuffer.slice(0, -1);
+        services.ptyWrapper.write(input);
       } else if (input === '\x15') {
-        // Ctrl+U - clear buffer and pass to PTY
-        inputBuffer = '';
-        ptyWrapper.write(input);
+        state.inputBuffer = '';
+        services.ptyWrapper.write(input);
       } else if (input.startsWith('\x1b')) {
-        // Escape sequences (arrows, etc) - don't add to buffer, pass to PTY
-        ptyWrapper.write(input);
+        services.ptyWrapper.write(input);
       } else {
-        // Normal input - add to buffer and echo to PTY
-        inputBuffer += input;
-        ptyWrapper.write(input);
+        state.inputBuffer += input;
+        services.ptyWrapper.write(input);
       }
       return;
     }
 
-    // Helper to render queue prompt at bottom of terminal
-    // Saves/restores cursor so PTY output continues at correct position
-    const renderQueuePrompt = (buffer: string): void => {
-      const rows = process.stdout.rows || 30;
-      // Save cursor, move to last row, clear line, show prompt, restore cursor
-      process.stdout.write(`\x1b7\x1b[${rows};1H\x1b[2K\x1b[33m[Q]\x1b[0m ${buffer}\x1b8`);
-    };
-
-    // Helper to clear queue prompt line at bottom
-    const clearQueuePrompt = (): void => {
-      const rows = process.stdout.rows || 30;
-      process.stdout.write(`\x1b7\x1b[${rows};1H\x1b[2K\x1b8`);
-    };
-
-    // Queue input mode handling (triggered by : at empty prompt)
-    if (inQueueInputMode) {
+    if (state.inQueueInputMode) {
       if (input === '\r' || input === '\n') {
-        // Enter - process command and exit mode
-        const command = queueInputBuffer.trim();
-        queueInputBuffer = '';
-        inQueueInputMode = false;
-
-        // Clear the queue prompt line
+        const command = state.queueInputBuffer.trim();
+        state.queueInputBuffer = '';
+        state.inQueueInputMode = false;
         clearQueuePrompt();
 
         if (command && isQueueCommand(command)) {
           await handleCommand(command);
         } else if (command) {
-          // Not a valid queue command - show warning
-          display.showMessage('warning', `[Queue] Unknown command: ${command}`);
+          services.display.showMessage('warning', `[Queue] Unknown command: ${command}`);
         }
-        // Don't send anything to PTY - stay at clean prompt
       } else if (input === '\x1b') {
-        // Escape - cancel and exit mode
-        queueInputBuffer = '';
-        inQueueInputMode = false;
+        state.queueInputBuffer = '';
+        state.inQueueInputMode = false;
         clearQueuePrompt();
-        display.showMessage('info', '[Queue] Cancelled');
+        services.display.showMessage('info', '[Queue] Cancelled');
       } else if (input === '\x7f' || input === '\b') {
-        // Backspace
-        if (queueInputBuffer.length > 0) {
-          queueInputBuffer = queueInputBuffer.slice(0, -1);
-          renderQueuePrompt(queueInputBuffer);
+        if (state.queueInputBuffer.length > 0) {
+          state.queueInputBuffer = state.queueInputBuffer.slice(0, -1);
+          renderQueuePrompt(state.queueInputBuffer);
         }
       } else if (input === '\x15') {
-        // Ctrl+U - clear buffer
-        queueInputBuffer = '';
+        state.queueInputBuffer = '';
         renderQueuePrompt('');
       } else if (!input.startsWith('\x1b')) {
-        // Normal input (ignore escape sequences like arrows)
-        queueInputBuffer += input;
-        renderQueuePrompt(queueInputBuffer);
+        state.queueInputBuffer += input;
+        renderQueuePrompt(state.queueInputBuffer);
       }
       return;
     }
 
-    // Check for queue mode trigger (: at empty input)
-    if (inputBuffer === '' && input === ':') {
-      inQueueInputMode = true;
-      queueInputBuffer = input;
-      // Clear PTY line and show queue prompt at bottom
-      ptyWrapper.write('\x15');
-      renderQueuePrompt(queueInputBuffer);
+    if (state.inputBuffer === '' && input === ':') {
+      state.inQueueInputMode = true;
+      state.queueInputBuffer = input;
+      services.ptyWrapper.write('\x15');
+      renderQueuePrompt(state.queueInputBuffer);
       return;
     }
 
-    // Check if Enter was pressed
     if (input === '\r' || input === '\n') {
-      // Use inputBuffer for reliable command detection (avoids PTY echo timing issues)
-      const currentLine = inputBuffer.trim();
-      inputBuffer = '';
+      const currentLine = state.inputBuffer.trim();
+      state.inputBuffer = '';
 
       logger.debug({ currentLine }, 'Enter pressed, checking line from inputBuffer');
 
-      // Check for multiline start commands
       if (currentLine === ':(') {
-        inMultilineMode = true;
-        multilineIsNewSession = false;
-        multilineBuffer = [];
-        display.showMessage('info', '[Queue] Multiline mode (end with :))');
-        ptyWrapper.write('\x15');
-        process.stdout.write('\r\x1b[2K[ML 0] ');
-        terminalEmulator.clear();
+        state.inMultilineMode = true;
+        state.multilineIsNewSession = false;
+        state.multilineBuffer = [];
+        services.display.showMessage('info', '[Queue] Multiline mode (end with :))');
+        services.ptyWrapper.write('\x15');
+        runtime.stdout.write('\r\x1b[2K[ML 0] ');
+        services.terminalEmulator.clear();
         return;
       }
-      // Normal input - send Enter to PTY
-      // (Queue commands are now handled in queue input mode)
-      ptyWrapper.write('\r');
+
+      services.ptyWrapper.write('\r');
     } else if (input === '\x7f' || input === '\b') {
-      // Backspace - update buffer and pass to PTY
-      inputBuffer = inputBuffer.slice(0, -1);
-      ptyWrapper.write(input);
+      state.inputBuffer = state.inputBuffer.slice(0, -1);
+      services.ptyWrapper.write(input);
     } else if (input === '\x03') {
-      // Ctrl+C - clear buffer and pass to PTY
-      inputBuffer = '';
-      ptyWrapper.write(input);
+      state.inputBuffer = '';
+      services.ptyWrapper.write(input);
     } else if (input === '\x15') {
-      // Ctrl+U - clear buffer and pass to PTY
-      inputBuffer = '';
-      ptyWrapper.write(input);
+      state.inputBuffer = '';
+      services.ptyWrapper.write(input);
     } else if (input.startsWith('\x1b')) {
-      // Escape sequences (arrows, etc) - don't add to buffer, pass to PTY
-      ptyWrapper.write(input);
+      services.ptyWrapper.write(input);
     } else {
-      // Normal input - add to buffer and pass to PTY
-      inputBuffer += input;
-      ptyWrapper.write(input);
+      state.inputBuffer += input;
+      services.ptyWrapper.write(input);
     }
   });
 
-  // Debounce resize handler to avoid excessive re-renders during rapid resizing
-  const RESIZE_DEBOUNCE_MS = 100;
-  const MIN_COLS = 40;
-  const MIN_ROWS = 10;
   const handleResize = debounce(() => {
-    const newCols = process.stdout.columns || 80;
-    const newRows = process.stdout.rows || 30;
-    // Re-render status bar first
-    display.updateStatusBar(queueManager.getItems());
-    // Re-set scroll region to exclude status bar after resize
-    process.stdout.write(`\x1b[${STATUS_BAR_HEIGHT + 1};${newRows}r`);
-    // Skip PTY resize if terminal is too small (prevents Claude Code crash)
-    if (newCols < MIN_COLS || newRows < MIN_ROWS) {
-      logger.debug({ newCols, newRows, MIN_COLS, MIN_ROWS }, 'Terminal too small, skipping PTY resize');
+    const { cols, rows } = getTerminalSize(runtime.stdout);
+    services.display.updateStatusBar(services.queueManager.getItems());
+    runtime.stdout.write(`\x1b[${STATUS_BAR_HEIGHT + 1};${rows}r`);
+    if (cols < MIN_COLS || rows < MIN_ROWS) {
+      logger.debug({ newCols: cols, newRows: rows, MIN_COLS, MIN_ROWS }, 'Terminal too small, skipping PTY resize');
       return;
     }
-    // Resize terminal emulator and PTY
-    terminalEmulator.resize(newCols, newRows);
-    ptyWrapper.resize(newCols, newRows);
+    services.terminalEmulator.resize(cols, rows);
+    services.ptyWrapper.resize(cols, rows);
   }, RESIZE_DEBOUNCE_MS);
 
-  process.stdout.on('resize', handleResize);
+  runtime.stdout.on('resize', handleResize);
 
-  process.on('exit', () => {
-    telegramNotifier.stopPolling();
-    cleanup();
+  setupTelegramBridge({
+    telegramNotifier: services.telegramNotifier,
+    ptyWrapper: services.ptyWrapper,
+    autoExecutor: services.autoExecutor,
+    stateDetector: services.stateDetector,
+    display: services.display,
+    queueManager: services.queueManager,
+    conversationLogger: services.conversationLogger,
+    terminalEmulator: services.terminalEmulator,
+    setInputBuffer: (value: string) => {
+      state.inputBuffer = value;
+    },
+  });
+}
+
+export async function runCli(options: RunCliOptions = {}): Promise<void> {
+  const runtime = createRuntime(options.runtime);
+  const context = options.context ?? await resolveRuntimeContext({ runtime });
+  const services = createRuntimeServices(context, {
+    runtime,
+    overrides: options.services,
   });
 
-  process.on('SIGINT', () => {
-    ptyWrapper.write('\x03');
+  if (context.qlaudeArgs.queueFile) {
+    const queueFilePath = path.join(QLAUDE_DIR, 'queue');
+    try {
+      const sourcePath = path.resolve(context.qlaudeArgs.queueFile);
+      const content = runtime.readFileSync(sourcePath, 'utf-8');
+      runtime.writeFileSync(queueFilePath, content, { mode: 0o600 });
+      logger.info({ source: sourcePath, dest: queueFilePath }, 'Queue file copied from CLI argument');
+    } catch (err) {
+      const error = err as NodeJS.ErrnoException;
+      if (error.code === 'ENOENT') {
+        runtime.stderr.write(`Error: Queue file not found: ${context.qlaudeArgs.queueFile}\n`);
+      } else {
+        runtime.stderr.write(`Error: Cannot read queue file: ${context.qlaudeArgs.queueFile} (${error.message})\n`);
+      }
+      runtime.exit(1);
+    }
+  }
+
+  setupTerminal(runtime.stdin);
+  registerQueueManagerHandlers(services);
+  services.display.setPaused(context.config.startPaused);
+
+  await services.queueManager.reload();
+  services.display.updateStatusBar(services.queueManager.getItems());
+
+  attachTerminalHandlers(context, services, runtime);
+
+  setupPtyLifecycle({
+    ptyWrapper: services.ptyWrapper,
+    autoExecutor: services.autoExecutor,
+    conversationLogger: services.conversationLogger,
+    display: services.display,
+    telegramNotifier: services.telegramNotifier,
+    queueManager: services.queueManager,
+    batchReporter: context.batchReporter,
+    cleanup: services.cleanup,
+    getClaudeArgs: () => context.qlaudeArgs.claudeArgs,
+    onExit: (code) => runtime.exit(code),
   });
 
-  process.on('SIGTERM', () => {
-    logger.info('Received SIGTERM, shutting down...');
-    cleanup();
-    process.exit(0);
-  });
+  registerProcessHandlers(services, runtime);
 
-  process.on('SIGHUP', () => {
-    logger.info('Received SIGHUP, shutting down...');
-    cleanup();
-    process.exit(0);
-  });
-
-  // Exception handlers
-  process.on('uncaughtException', (error) => {
-    logger.error({ error }, 'Uncaught exception');
-    cleanup();
-    process.exit(1);
-  });
-
-  process.on('unhandledRejection', (reason) => {
-    logger.error({ reason }, 'Unhandled rejection');
-    cleanup();
-    process.exit(1);
-  });
+  if (services.telegramNotifier.isEnabled()) {
+    services.telegramNotifier.startPolling();
+    logger.info({ instanceId: services.telegramNotifier.getInstanceId() }, 'Telegram bidirectional communication enabled');
+  }
 
   try {
-    ptyWrapper.spawn(claudeArgs);
-    // Scroll region is set on first PTY data event (see ptyWrapper.on('data') handler)
+    services.ptyWrapper.spawn(context.qlaudeArgs.claudeArgs);
   } catch (error) {
-    process.stderr.write(`\nqlaude: ${toUserFriendlyMessage(error)}\n`);
+    runtime.stderr.write(`\nqlaude: ${toUserFriendlyMessage(error)}\n`);
     logger.error({ error }, 'Failed to spawn Claude Code');
-    cleanup();
-    process.exit(1);
+    services.cleanup();
+    runtime.exit(1);
   }
 }
 
-main().catch((error) => {
-  logger.error({ error }, 'Unhandled error in main');
-  process.exit(1);
-});
+if (process.env.QLAUDE_DISABLE_AUTORUN !== '1') {
+  assertSupportedPlatform();
+
+  try {
+    await runCli();
+  } catch (error) {
+    logger.error({ error }, 'Unhandled error in main');
+    process.exit(1);
+  }
+}

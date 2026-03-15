@@ -15,6 +15,7 @@
 
 import { resolve } from 'path';
 import { existsSync } from 'fs';
+import { pathToFileURL } from 'url';
 import { writeSessionId } from '../utils/hook-setup.js';
 import { isValidSessionId } from '../utils/session-id.js';
 
@@ -53,45 +54,54 @@ async function readStdin(): Promise<string> {
 /**
  * Main entry point
  */
-async function main(): Promise<void> {
+export async function run(): Promise<number> {
   try {
     const input = await readStdin();
 
     if (!input.trim()) {
-      // No input provided, exit silently
-      process.exit(0);
+      return 0;
     }
 
     const data: SessionStartInput = JSON.parse(input);
 
     if (!data.session_id) {
       console.error('qlaude-session-hook: No session_id in input');
-      process.exit(1);
+      return 1;
     }
 
     // Validate session_id to prevent path traversal
     if (!isValidSessionId(data.session_id)) {
       console.error('qlaude-session-hook: Invalid session_id format');
-      process.exit(1);
+      return 1;
     }
 
     // Validate and resolve cwd to prevent path traversal
     const cwd = data.cwd ? resolve(data.cwd) : process.cwd();
     if (data.cwd && !isValidCwd(cwd)) {
       console.error('qlaude-session-hook: Invalid cwd path');
-      process.exit(1);
+      return 1;
     }
 
     // Write session ID to file
     writeSessionId(data.session_id, cwd);
 
-    // Exit successfully
-    process.exit(0);
+    return 0;
   } catch (err) {
     // Log error but don't block Claude Code
     console.error('qlaude-session-hook error:', err);
-    process.exit(1);
+    return 1;
   }
 }
 
-main();
+export async function main(): Promise<void> {
+  process.exit(await run());
+}
+
+function isExecutedDirectly(): boolean {
+  const entry = process.argv[1];
+  return !!entry && import.meta.url === pathToFileURL(entry).href;
+}
+
+if (isExecutedDirectly()) {
+  void main();
+}

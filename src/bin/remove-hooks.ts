@@ -10,8 +10,9 @@
  */
 
 import { removeHook, isHookInstalled } from '../utils/hook-setup.js';
+import { pathToFileURL } from 'url';
 
-function main(): void {
+export function main(): void {
   console.log('qlaude: Removing Claude Code hooks...');
 
   if (!isHookInstalled()) {
@@ -34,4 +35,11 @@ function main(): void {
   }
 }
 
-main();
+function isExecutedDirectly(): boolean {
+  const entry = process.argv[1];
+  return !!entry && import.meta.url === pathToFileURL(entry).href;
+}
+
+if (isExecutedDirectly()) {
+  main();
+}

@@ -370,12 +370,23 @@ export class QueueManager extends (EventEmitter as new () => EventEmitter & Type
   }
 
   /**
+   * Clone queue items before exposing them outside the manager.
+   * Prevents external mutation from desynchronizing in-memory and persisted state.
+   */
+  private cloneItem(item: QueueItem): QueueItem {
+    return {
+      ...item,
+      addedAt: item.addedAt ? new Date(item.addedAt) : undefined,
+    };
+  }
+
+  /**
    * Emit a queue event
    */
   private emitEvent(type: QueueEvent['type'], item?: QueueItem): void {
     const event: QueueEvent = {
       type,
-      item,
+      item: item ? this.cloneItem(item) : undefined,
       queueLength: this.items.length,
       timestamp: new Date(),
     };
@@ -459,14 +470,14 @@ export class QueueManager extends (EventEmitter as new () => EventEmitter & Type
    * Get all items in the queue (in-memory)
    */
   getItems(): QueueItem[] {
-    return [...this.items];
+    return this.items.map((item) => this.cloneItem(item));
   }
 
   /**
    * Get the next item in the queue without removing it (in-memory)
    */
   getNextItem(): QueueItem | null {
-    return this.items.length > 0 ? this.items[0] : null;
+    return this.items.length > 0 ? this.cloneItem(this.items[0]) : null;
   }
 
   /**
